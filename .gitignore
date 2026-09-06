@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+environment/
+
+# Build and local tooling
+build/
+dist/
+*.egg-info/
+.vscode/
+.idea/
+
+# Large models and datasets
+*.onnx
+*.pt
+*.pth
+*.ckpt
+*.h5
+*.keras
+*.tflite
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.wav
+*.zip
+*.7z
+*.whl
+data/raw/
+data/processed/
+
+# Local/private files
+签名.jpg
+图片/
+*.doc
+*.docx
+*.tmp
+*.log
+.env
+.env.*
+!.env.example
