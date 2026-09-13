@@ -47,6 +47,9 @@ data/processed/
 不推送/
 文档/
 
+# 本地工具与工作产物（含审计报告、会话记录）
+.workbuddy/
+
 *.tmp
 *.log
 .env
