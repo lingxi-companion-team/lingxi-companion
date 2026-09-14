@@ -15,4 +15,4 @@ pythonpath = ["."]
 addopts = "-q"
 
 [tool.setuptools.packages.find]
-include = ["common*", "agents*", "fusion*", "pipeline*"]
+include = ["common*", "agents*", "fusion*", "pipeline*", "app*"]

@@ -1,0 +1,56 @@
+# 灵犀学伴 —— 全局阈值与参数
+#
+# 所有魔数集中在此。改数值不需要改代码、不需要三方协商；
+# 改 key 结构属于接口变更，须走 chore/interface-* 分支并三方评审。
+#
+# 约定：本文件只放"可调参数"，不放业务逻辑。
+# 每个参数都标注了归属人，方便定位谁该关心它。
+
+weights:
+  # 环境驱动动态权重（A 主责）
+  # w_face(E) = 1 / (1 + exp(k * (E - e0)))
+  e0: 0.6            # logistic 中心点：E=0.6 时两路权重相等
+  k: 8.0             # logistic 斜率：8.0 对应约 0.35~0.85 的过渡带
+
+negotiation:
+  # 三级置信度协商（A 主责）
+  high_trust_E: 0.8      # 一级：E 高于此值且两路一致 → 直接输出共识
+  low_confidence: 0.4    # 三级：最高概率低于此值 → 标记不确定
+  occlusion_trigger: 0.5 # 遮挡程度高于此值 → 强制触发二级降权
+
+smoothing:
+  # "3中2" 时序平滑（A 主责）
+  window: 3                  # 滑动窗口长度
+  min_votes: 2               # 确认所需票数
+  hold_on_insufficient: true # true=票数不足时保持上一稳定状态并标记 stale
+                             # false=输出 UNKNOWN（会导致演示时状态闪断，不建议）
+
+env_agent:
+  # 环境效度评估（C 主责）
+  blur_tolerance: 0.4    # 模糊度容忍线（拉普拉斯方差归一化后）
+  brightness_min: 0.25   # 亮度过低阈值
+  brightness_max: 0.95   # 亮度过高（过曝）阈值
+  occlusion_weight: 0.5  # 遮挡项在 env_score 中的合成权重
+
+expression_agent:
+  # 表情智能体（B 主责）
+  roi_size: 224          # ROI 归一化边长
+  min_face_px: 48        # 人脸小于此像素数视为检测失败 → UNKNOWN
+  confidence_floor: 0.35 # 低于此置信度直接降级为 UNKNOWN
+
+pipeline:
+  # 采集与调度（B 主责）
+  queue_size: 2          # 每路队列深度，超过则丢弃最旧帧
+  drop_stale_after: 0.2  # 帧龄超过此秒数视为过期，直接丢弃
+  target_fps: 15         # 目标处理帧率
+
+behavior_agent:
+  # 行为智能体（A 主责）
+  sequence_len: 16       # LSTM 输入序列长度（骨骼点帧数）
+  min_visibility: 0.5    # 单个关键点置信度低于此值视为缺失
+
+app:
+  # 前端（C 主责）
+  refresh_ms: 100        # Streamlit 刷新间隔
+  show_weights: true     # 是否展示动态权重面板
+  enable_demo_mode: true # 无摄像头时的 mock 演示模式
