@@ -57,17 +57,20 @@ lingxi-companion/
 │   ├── expression/     # 表情智能体
 │   └── env/            # 环境智能体
 ├── app/                 # Streamlit 前端与演示入口
-├── common/
-│   ├── mock/            # mock 数据生成器
-│   └── perception_types.py
+├── common/              # 共享冻结层（接口契约所在，变更须三方评审）
+│   ├── agent_base.py    #   智能体抽象基类
+│   ├── config.py        #   零依赖配置解析
+│   ├── mock/            #   mock 数据生成器
+│   └── perception_types.py  # 唯一接口契约
+├── configs/             # 阈值配置（集中全部可调参数）
 ├── fusion/              # 动态权重融合、时序平滑
 ├── pipeline/            # 采集、推理、传输流水线
-├── tests/               # 单元测试、集成测试和压力测试
+├── tests/               # 契约/冒烟测试 + 各模块单测与压测
 ├── docs/                # 算法、标注和实验文档
-├── configs/             # 配置文件
-├── scripts/              # 工具脚本
-└── 文档/                # 项目说明和任务计划
+└── scripts/             # 工具脚本
 ```
+
+> 各目录的详细职责与人员分工见团队内部协作文档（不入库）。
 
 ## 本地运行
 
@@ -85,10 +88,8 @@ pytest -q
 
 ## 文档入口
 
-- [任务分配与进度计划](文档/任务分配与进度计划.md)
-- [项目说明文档](文档/说明文档.md)
-- [贡献指南](CONTRIBUTING.md)
 - [算法技术文档](docs/algorithm.md)
+- [贡献指南](CONTRIBUTING.md)
 
 ## 隐私说明
 
