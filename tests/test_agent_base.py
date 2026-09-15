@@ -13,6 +13,7 @@ import pytest
 
 from common import agent_base
 from common.agent_base import EnvAgent, PerceptionAgent
+from common.config import DEFAULT_E0
 from common.perception_types import (
     AGENT_EXPRESSION,
     EmotionLabel,
@@ -111,6 +112,18 @@ class TestEnvAgentProtocol:
             assert 0.0 <= getattr(context, name) <= 1.0, name
         assert context.ts == 0.5
         assert context.frame_id == 3
+
+    def test_neutral_env_score_is_e0_not_half(self) -> None:
+        """``env_score`` 必须是 ``weights.e0``（默认 0.6），而不是固定 0.5。
+
+        回归护栏：``e0`` 是 logistic 中心点，只有 ``E = e0`` 时两路权重才相等
+        （0.5 : 0.5），才是真正的「无信息」先验。若改回 0.5，因 ``0.5 < e0``
+        权重会偏到行为通道（约 0.31 : 0.69），等于环境评估失败时偷偷假设
+        「环境很差」，把话语权单方面让给行为通道。
+        """
+        env_score = _StubEnv().assess(None, ts=0.0, frame_id=0).env_score
+        assert env_score == pytest.approx(DEFAULT_E0)
+        assert env_score != pytest.approx(0.5)
 
     def test_neutral_reports_no_occlusion(self) -> None:
         """降级路径不应谎称存在遮挡 —— 否则会额外触发一次环境降权。"""

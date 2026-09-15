@@ -19,6 +19,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
+from common.config import DEFAULT_E0, get
 from common.perception_types import EnvContext, PerceptionResult
 
 __all__ = ["EnvAgent", "PerceptionAgent"]
@@ -98,7 +99,8 @@ class EnvAgent(ABC):
         """评估单帧的环境质量。
 
         Returns:
-            环境上下文。失败时返回中性值（``env_score=0.5``），不要抛异常。
+            环境上下文。失败时返回中性值（``env_score = weights.e0``，
+            见 :meth:`_neutral`），不要抛异常。
         """
 
     def close(self) -> None:
@@ -107,13 +109,24 @@ class EnvAgent(ABC):
     def _neutral(self, ts: float, frame_id: int) -> EnvContext:
         """构造中性环境值，供子类在异常分支复用。
 
-        取 0.5 而非 0.0 或 1.0：既不谎称环境良好（避免表情权重被错误抬高），
-        也不谎称环境恶劣（避免无端降权）。
+        ``env_score``（即融合层的环境因子 ``E``）取 ``weights.e0``（默认 0.6）
+        而非固定 0.5：``e0`` 是 logistic 中心点，只有 ``E = e0`` 时两路权重才
+        相等（0.5 : 0.5），才是真正的「无信息」先验。若取 0.5，因 ``0.5 < e0``
+        会算成约 0.31 : 0.69，等于在评估失败时**偷偷假设环境很差**，把判断权
+        单方面让给行为通道。
+
+        这与 :meth:`fusion.fusion_engine.FusionEngine._neutral_E` 取同一个值，
+        两条降级路径（融合层拿不到 ``EnvContext``、环境智能体自身评估失败）
+        必须给出同样的中性先验，否则同一份「无信息」输入会因走哪条路径而不同。
+
+        ``brightness`` / ``blur`` 仍取 0.5：它们是原始观测量，「中等」即无倾向，
+        不参与权重转移，与 ``e0`` 是两回事。
+        ``occlusion`` 取 0.0：不得谎称存在遮挡，否则会额外触发一次环境降权。
         """
         return EnvContext(
             brightness=0.5,
             blur=0.5,
-            env_score=0.5,
+            env_score=float(get("weights", "e0", default=DEFAULT_E0)),
             occlusion=0.0,
             ts=ts,
             frame_id=frame_id,

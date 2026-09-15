@@ -31,14 +31,12 @@ from __future__ import annotations
 import math
 from collections.abc import Iterable, Mapping
 
+from common.config import DEFAULT_E0, DEFAULT_K
 from common.perception_types import AGENT_EXPRESSION
 
+# DEFAULT_E0 / DEFAULT_K 的**定义**在 common/config.py（单一来源，见那里的说明）。
+# 本模块重新导出，使 ``fusion.weights.DEFAULT_E0`` 这条既有路径继续可用。
 __all__ = ["DEFAULT_E0", "DEFAULT_K", "normalized_weights", "w_behavior", "w_face"]
-
-#: logistic 中心点：E 等于该值时两路权重相等
-DEFAULT_E0 = 0.6
-#: logistic 斜率：越大过渡越陡，8.0 约对应 0.35~0.85 的过渡带
-DEFAULT_K = 8.0
 
 
 def w_face(E: float, E0: float = DEFAULT_E0, k: float = DEFAULT_K) -> float:

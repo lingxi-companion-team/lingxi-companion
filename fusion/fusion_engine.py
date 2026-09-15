@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
-from common.config import get, load_config
+from common.config import DEFAULT_E0, DEFAULT_K, get, load_config
 from common.perception_types import (
     AGENT_BEHAVIOR,
     AGENT_EXPRESSION,
@@ -177,7 +177,7 @@ class FusionEngine:
         正好相等（0.5 : 0.5），是真正的「无信息」先验。若取 0.5，因 ``0.5 < E0``
         会偏向行为通道（约 0.31 : 0.69），等于在环境未知时**偷偷假设环境很差**。
         """
-        return float(get("weights", "e0", default=0.6, config=self._config))
+        return float(get("weights", "e0", default=DEFAULT_E0, config=self._config))
 
     def _resolve_weights(
         self,
@@ -204,8 +204,8 @@ class FusionEngine:
         weights = normalized_weights(
             E,
             active=[a for a in active_ids if a in (AGENT_EXPRESSION, AGENT_BEHAVIOR)],
-            E0=float(get("weights", "e0", default=0.6, config=self._config)),
-            k=float(get("weights", "k", default=8.0, config=self._config)),
+            E0=float(get("weights", "e0", default=DEFAULT_E0, config=self._config)),
+            k=float(get("weights", "k", default=DEFAULT_K, config=self._config)),
         )
 
         trigger = float(get("negotiation", "occlusion_trigger", default=0.5, config=self._config))
