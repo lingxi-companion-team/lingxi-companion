@@ -4,10 +4,7 @@
 
 - `main`: stable and released code; do not push directly.
 - `develop`: daily integration branch.
-- `dev-1`, `dev-2`, `dev-3`: reserved member branches. Their owners and responsibilities are intentionally undecided for now.
-- `feature/*`: short-lived task branches created from the latest `develop`.
-
-Until responsibilities are assigned, use a neutral branch name such as `feature/<topic>` rather than encoding a person or module into the branch name.
+- `feature/*`: short-lived task branches created from the latest `develop`; delete them once merged.
 
 ## Pull requests
 
