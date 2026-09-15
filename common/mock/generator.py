@@ -21,7 +21,6 @@ from dataclasses import dataclass, field
 
 from common.perception_types import (
     AGENT_BEHAVIOR,
-    AGENT_ENV,
     AGENT_EXPRESSION,
     EMOTION_LABELS,
     EmotionLabel,
@@ -280,9 +279,7 @@ def get_scenario(name: str) -> Scenario:
         raise KeyError(f"unknown scenario {name!r}; available: {available}") from None
 
 
-def scenario_frame(
-    name: str, index: int = 0
-) -> tuple[list[PerceptionResult], EnvContext]:
+def scenario_frame(name: str, index: int = 0) -> tuple[list[PerceptionResult], EnvContext]:
     """直接取某场景的第 ``index`` 帧，便于写单行断言。"""
     return get_scenario(name).frames[index]
 

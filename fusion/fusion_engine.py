@@ -24,7 +24,7 @@
 
 from __future__ import annotations
 
-from typing import Mapping, Sequence
+from collections.abc import Mapping, Sequence
 
 from common.config import get, load_config
 from common.perception_types import (
@@ -123,9 +123,7 @@ class FusionEngine:
             else:
                 # 兼容降级：只有标量 prob 时，视作全部概率压在 top 标签上。
                 # 这与旧的加权多数投票逐位等价。
-                scores[result.label] = (
-                    scores.get(result.label, 0.0) + weight * result.prob
-                )
+                scores[result.label] = scores.get(result.label, 0.0) + weight * result.prob
 
         if not scores:
             return FusionOutput(
@@ -156,9 +154,7 @@ class FusionEngine:
 
         # 三级与冲突：置信度不足或无法定论时，等级再高也不强判
         label = (
-            EmotionLabel.UNKNOWN
-            if reason in (REASON_LOW_CONFIDENCE, REASON_CONFLICT)
-            else winner
+            EmotionLabel.UNKNOWN if reason in (REASON_LOW_CONFIDENCE, REASON_CONFLICT) else winner
         )
 
         return FusionOutput(
@@ -212,9 +208,7 @@ class FusionEngine:
             k=float(get("weights", "k", default=8.0, config=self._config)),
         )
 
-        trigger = float(
-            get("negotiation", "occlusion_trigger", default=0.5, config=self._config)
-        )
+        trigger = float(get("negotiation", "occlusion_trigger", default=0.5, config=self._config))
         if occlusion > trigger and AGENT_EXPRESSION in weights and AGENT_BEHAVIOR in weights:
             # 遮挡越严重，行为通道的相对增益越大。
             # 增益从 1.0（刚好到触发线）线性升到 1/0.05（完全遮挡）。
@@ -243,15 +237,9 @@ class FusionEngine:
         判定优先级（高 → 低）：``low_confidence`` > ``conflict`` >
         ``consensus`` > ``reweight``。
         """
-        low_conf = float(
-            get("negotiation", "low_confidence", default=0.4, config=self._config)
-        )
-        high_E = float(
-            get("negotiation", "high_trust_E", default=0.8, config=self._config)
-        )
-        trigger = float(
-            get("negotiation", "occlusion_trigger", default=0.5, config=self._config)
-        )
+        low_conf = float(get("negotiation", "low_confidence", default=0.4, config=self._config))
+        high_E = float(get("negotiation", "high_trust_E", default=0.8, config=self._config))
+        trigger = float(get("negotiation", "occlusion_trigger", default=0.5, config=self._config))
         conflict_margin = float(
             get("negotiation", "conflict_margin", default=0.05, config=self._config)
         )
@@ -267,10 +255,7 @@ class FusionEngine:
             return REASON_CONFLICT
 
         # 一级：环境良好 + 无遮挡 + 两路一致
-        both_agree = (
-            len(by_agent) >= 2
-            and len({r.label for r in by_agent.values()}) == 1
-        )
+        both_agree = len(by_agent) >= 2 and len({r.label for r in by_agent.values()}) == 1
         if E > high_E and both_agree and occlusion <= trigger:
             return REASON_CONSENSUS
 

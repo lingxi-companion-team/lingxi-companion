@@ -33,9 +33,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Mapping
 
 __all__ = [
     "AGENT_BEHAVIOR",
@@ -162,13 +162,10 @@ class PerceptionResult:
         normalized: dict[EmotionLabel, float] = {}
         for key, value in self.prob_dist.items():
             if not isinstance(key, EmotionLabel):
-                raise ValueError(
-                    f"prob_dist keys must be EmotionLabel, got {type(key).__name__}"
-                )
+                raise ValueError(f"prob_dist keys must be EmotionLabel, got {type(key).__name__}")
             if key is EmotionLabel.UNKNOWN:
                 raise ValueError(
-                    "prob_dist must not contain UNKNOWN; "
-                    "set label=UNKNOWN to abstain instead"
+                    "prob_dist must not contain UNKNOWN; set label=UNKNOWN to abstain instead"
                 )
             _check_unit_range(**{f"prob_dist[{key.value}]": float(value)})
             normalized[key] = float(value)

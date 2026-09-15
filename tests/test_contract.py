@@ -66,9 +66,7 @@ class TestPerceptionResult:
 
     def test_new_timestamp_fields(self) -> None:
         """新增字段：B4 的丢帧判据依赖它们。"""
-        r = PerceptionResult(
-            EmotionLabel.FOCUSED, 0.8, 0.9, AGENT_EXPRESSION, ts=1.5, frame_id=7
-        )
+        r = PerceptionResult(EmotionLabel.FOCUSED, 0.8, 0.9, AGENT_EXPRESSION, ts=1.5, frame_id=7)
         assert r.ts == 1.5
         assert r.frame_id == 7
 
@@ -88,9 +86,7 @@ class TestPerceptionResult:
 
     def test_negative_frame_id_rejected(self) -> None:
         with pytest.raises(ValueError, match="frame_id"):
-            PerceptionResult(
-                EmotionLabel.FOCUSED, 0.8, 0.9, AGENT_EXPRESSION, frame_id=-1
-            )
+            PerceptionResult(EmotionLabel.FOCUSED, 0.8, 0.9, AGENT_EXPRESSION, frame_id=-1)
 
     def test_boundary_values_accepted(self) -> None:
         PerceptionResult(EmotionLabel.FOCUSED, 0.0, 0.0, AGENT_EXPRESSION)
@@ -186,8 +182,11 @@ class TestProbDist:
     def test_not_normalized_rejected(self, dist: dict) -> None:
         with pytest.raises(ValueError, match="sum to 1"):
             PerceptionResult(
-                EmotionLabel.FOCUSED, dist[EmotionLabel.FOCUSED], 0.9,
-                AGENT_EXPRESSION, prob_dist=dist,
+                EmotionLabel.FOCUSED,
+                dist[EmotionLabel.FOCUSED],
+                0.9,
+                AGENT_EXPRESSION,
+                prob_dist=dist,
             )
 
     def test_value_out_of_range_rejected(self) -> None:

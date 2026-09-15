@@ -29,7 +29,7 @@ E       w_face      w_behavior
 from __future__ import annotations
 
 import math
-from typing import Iterable, Mapping
+from collections.abc import Iterable, Mapping
 
 from common.perception_types import AGENT_EXPRESSION
 
@@ -116,7 +116,9 @@ def normalized_weights(
     return weights
 
 
-def weights_from_config(E: float, config: Mapping, active: Iterable[str] | None = None) -> dict[str, float]:
+def weights_from_config(
+    E: float, config: Mapping, active: Iterable[str] | None = None
+) -> dict[str, float]:
     """从 ``configs/thresholds.yaml`` 的 ``weights`` 段读取参数并计算。
 
     让实现方无需在代码里硬编码 E0 / k，调参只改配置文件。

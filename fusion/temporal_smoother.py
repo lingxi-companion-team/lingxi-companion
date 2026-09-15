@@ -21,7 +21,7 @@
 from __future__ import annotations
 
 from collections import deque
-from typing import Mapping
+from collections.abc import Mapping
 
 from common.config import get, load_config
 from common.perception_types import EmotionLabel, FinalState
@@ -30,7 +30,7 @@ __all__ = ["TemporalSmoother"]
 
 
 class TemporalSmoother:
-    """"3中2" 滑动窗口确认器。
+    """ "3中2" 滑动窗口确认器。
 
     Args:
         window_size: 窗口长度，默认取配置 ``smoothing.window``（3）。
@@ -52,9 +52,7 @@ class TemporalSmoother:
         if window_size is None:
             window_size = int(get("smoothing", "window", default=3, config=self._config))
         if min_votes is None:
-            min_votes = int(
-                get("smoothing", "min_votes", default=2, config=self._config)
-            )
+            min_votes = int(get("smoothing", "min_votes", default=2, config=self._config))
         if hold_on_insufficient is None:
             hold_on_insufficient = bool(
                 get(
@@ -72,6 +70,7 @@ class TemporalSmoother:
 
         self._min_votes = min_votes
         self._hold = hold_on_insufficient
+        self._window_size = window_size
         self._window: deque[EmotionLabel] = deque(maxlen=window_size)
 
         # 已确认的稳定状态（用于 hold 语义）
@@ -112,7 +111,9 @@ class TemporalSmoother:
         if label is not EmotionLabel.UNKNOWN:
             self._window.append(label)
 
-        if len(self._window) < self._window.maxlen:
+        # 用自存的 _window_size 而非 deque.maxlen：后者类型是 int | None，
+        # 会让静态检查无法确认这是「整数比较」（构造时已保证 >= 1）。
+        if len(self._window) < self._window_size:
             return self._held_or_none()
 
         counts: dict[EmotionLabel, int] = {}

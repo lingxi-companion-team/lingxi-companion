@@ -34,17 +34,13 @@ def _result(agent_id: str, label: EmotionLabel, prob: float) -> PerceptionResult
     return PerceptionResult(label, prob, prob, agent_id)
 
 
-def _dist_result(
-    agent_id: str, dist: dict[EmotionLabel, float]
-) -> PerceptionResult:
+def _dist_result(agent_id: str, dist: dict[EmotionLabel, float]) -> PerceptionResult:
     """填完整分布的结果 —— 走 §3.1 的 ``S(ℓ) = Σ w_i·P_i(ℓ)`` 公式。
 
     标签与标量 ``prob`` 取分布中的 argmax，保证与契约自洽。
     """
     label = max(dist, key=lambda item: dist[item])
-    return PerceptionResult(
-        label, dist[label], dist[label], agent_id, prob_dist=dist
-    )
+    return PerceptionResult(label, dist[label], dist[label], agent_id, prob_dist=dist)
 
 
 def _p(expr_dist: dict[EmotionLabel, float], beh_dist: dict[EmotionLabel, float]):
@@ -203,9 +199,7 @@ class TestFusionReweight:
             ],
             EnvContext(0.8, 0.2, 0.75, occlusion=0.9),
         )
-        assert (
-            blocked.weights[AGENT_EXPRESSION] < clear.weights[AGENT_EXPRESSION]
-        )
+        assert blocked.weights[AGENT_EXPRESSION] < clear.weights[AGENT_EXPRESSION]
         assert blocked.label is EmotionLabel.CONFUSED
 
 
@@ -263,9 +257,7 @@ class TestFusionDegradation:
         assert out.reason == REASON_EMPTY
 
     def test_none_env_does_not_crash(self) -> None:
-        out = FusionEngine().fuse(
-            [_result(AGENT_EXPRESSION, EmotionLabel.FOCUSED, 0.8)], None
-        )
+        out = FusionEngine().fuse([_result(AGENT_EXPRESSION, EmotionLabel.FOCUSED, 0.8)], None)
         assert out.label is EmotionLabel.FOCUSED
 
     def test_duplicate_agent_keeps_highest_confidence(self) -> None:
@@ -285,9 +277,7 @@ class TestFusionMetadata:
 
     def test_ts_and_frame_id_propagated(self) -> None:
         env = EnvContext(0.9, 0.1, 0.9, ts=3.3, frame_id=33)
-        out = FusionEngine().fuse(
-            [_result(AGENT_EXPRESSION, EmotionLabel.FOCUSED, 0.9)], env
-        )
+        out = FusionEngine().fuse([_result(AGENT_EXPRESSION, EmotionLabel.FOCUSED, 0.9)], env)
         assert out.ts == 3.3
         assert out.frame_id == 33
 
@@ -376,9 +366,7 @@ class TestFullDistributionFusion:
         }
         env = EnvContext(0.8, 0.2, 0.6)
         with_dist = FusionEngine().fuse([_dist_result(AGENT_EXPRESSION, dist)], env)
-        scalar = FusionEngine().fuse(
-            [_result(AGENT_EXPRESSION, EmotionLabel.FOCUSED, 0.7)], env
-        )
+        scalar = FusionEngine().fuse([_result(AGENT_EXPRESSION, EmotionLabel.FOCUSED, 0.7)], env)
         assert with_dist.label is scalar.label is EmotionLabel.FOCUSED
         assert with_dist.confidence == pytest.approx(scalar.confidence)
 

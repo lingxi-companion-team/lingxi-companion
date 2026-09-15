@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import pytest
 
-from common.mock.generator import get_scenario, scenario_frame
-from common.perception_types import AGENT_BEHAVIOR, AGENT_EXPRESSION, EmotionLabel
+from common.mock.generator import get_scenario
+from common.perception_types import AGENT_EXPRESSION, EmotionLabel
 from fusion.fusion_engine import FusionEngine
 from fusion.temporal_smoother import TemporalSmoother
 
@@ -210,14 +210,16 @@ class TestMemoryComplexity:
         s = TemporalSmoother()
         for i in range(1000):
             s.update(F if i % 2 == 0 else C)
-        assert len(s._window) == 3  # noqa: SLF001 — 刻意验证内部结构
+        # 刻意直接读私有属性：本用例要验证的正是内部结构本身。
+        assert len(s._window) == 3
 
     def test_config_defaults_loaded(self) -> None:
         """默认参数应来自 configs/thresholds.yaml。"""
         s = TemporalSmoother()
-        assert s._window.maxlen == 3  # noqa: SLF001
-        assert s._min_votes == 2  # noqa: SLF001
-        assert s._hold is True  # noqa: SLF001
+        # 同上，直接读私有属性以核对配置默认值确实被载入。
+        assert s._window.maxlen == 3
+        assert s._min_votes == 2
+        assert s._hold is True
 
 
 class TestEndToEndPipeline:
