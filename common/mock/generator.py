@@ -8,19 +8,22 @@
 1. **确定性**：不使用随机数。同一场景每次产出相同结果，便于断言。
 2. **覆盖边界**：共识、冲突、弱光、低置信、遮挡、单通道、抖动，七类情形。
 3. **可自解释**：每个场景都带 ``note`` 说明预期行为，测试直接读取。
+4. **走真实路径**：每帧都填充 ``prob_dist``（见 :func:`_distribution`），
+   使 mock 数据经由算法文档 §3.1 的完整分布公式，而非融合层的兼容降级路径。
 
 场景清单见 :data:`SCENARIOS`。
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 
 from common.perception_types import (
     AGENT_BEHAVIOR,
     AGENT_ENV,
     AGENT_EXPRESSION,
+    EMOTION_LABELS,
     EmotionLabel,
     EnvContext,
     PerceptionResult,
@@ -35,6 +38,23 @@ __all__ = [
     "sample_stream",
     "scenario_frame",
 ]
+
+
+def _distribution(label: EmotionLabel, prob: float) -> dict[EmotionLabel, float]:
+    """把标量 ``prob`` 展开为三类情感上的**归一化**分布。
+
+    余量 ``1 - prob`` 在其余两类上均分。这是一个确定性、且不额外引入语义偏好
+    的构造：它只保证 mock 数据走「完整分布」路径（``S(ℓ) = Σ w_i·P_i(ℓ)``），
+    而不是让融合层退回「只用 top 标签」的兼容降级路径。
+
+    注意：``UNKNOWN`` 不是情感类别，不参与分布（见
+    ``common/perception_types.py::EMOTION_LABELS``）。
+    """
+    others = [item for item in EMOTION_LABELS if item is not label]
+    rest = (1.0 - prob) / len(others)
+    dist: dict[EmotionLabel, float] = {item: rest for item in others}
+    dist[label] = prob
+    return dist
 
 
 @dataclass(frozen=True)
@@ -65,7 +85,15 @@ def _frame(
     """构造一帧：感知结果 + 环境上下文。"""
     ts = frame_id * 0.1  # 假定 10 FPS，便于断言时间戳
     perceptions = [
-        PerceptionResult(label, prob, prob, agent_id, ts=ts, frame_id=frame_id)
+        PerceptionResult(
+            label,
+            prob,
+            prob,
+            agent_id,
+            ts=ts,
+            frame_id=frame_id,
+            prob_dist=_distribution(label, prob),
+        )
         for agent_id, label, prob in results
     ]
     env = EnvContext(
@@ -103,16 +131,19 @@ SCENARIOS: list[Scenario] = [
     ),
     Scenario(
         name="conflict",
-        note="环境良好但两路冲突 → 二级协商，表情权重占优，判定随表情",
+        note=(
+            "两路判断相反且置信度相当（环境中性 E=0.60 → 权重 0.5:0.5），"
+            "加权得分近乎持平 → 冲突识别，输出 UNKNOWN 而不强判"
+        ),
         frames=[
             _frame(
                 [
-                    (AGENT_EXPRESSION, EmotionLabel.CONFUSED, 0.75),
-                    (AGENT_BEHAVIOR, EmotionLabel.FOCUSED, 0.70),
+                    (AGENT_EXPRESSION, EmotionLabel.CONFUSED, 0.90),
+                    (AGENT_BEHAVIOR, EmotionLabel.FOCUSED, 0.90),
                 ],
-                E=0.85,
-                brightness=0.85,
-                blur=0.15,
+                E=0.60,
+                brightness=0.8,
+                blur=0.2,
                 frame_id=i,
             )
             for i in range(1, 5)
@@ -141,8 +172,8 @@ SCENARIOS: list[Scenario] = [
         frames=[
             _frame(
                 [
-                    (AGENT_EXPRESSION, EmotionLabel.CONFUSED, 0.35),
-                    (AGENT_BEHAVIOR, EmotionLabel.DISTRACTED, 0.33),
+                    (AGENT_EXPRESSION, EmotionLabel.CONFUSED, 0.36),
+                    (AGENT_BEHAVIOR, EmotionLabel.DISTRACTED, 0.35),
                 ],
                 E=0.70,
                 brightness=0.7,
@@ -277,6 +308,7 @@ def fake_agent(
     label: EmotionLabel = EmotionLabel.FOCUSED,
     prob: float = 0.9,
     confidence: float | None = None,
+    prob_dist: Mapping[EmotionLabel, float] | None = None,
 ):
     """返回一个符合 :class:`PerceptionAgent` 协议的假智能体。
 
@@ -288,10 +320,14 @@ def fake_agent(
         label: 恒定输出的标签。
         prob: 恒定输出的概率。
         confidence: 恒定置信度，``None`` 时与 ``prob`` 相同。
+        prob_dist: 完整概率分布。``None``（默认）时由 ``(label, prob)`` 自动
+            展开（见 :func:`_distribution`），使融合层走完整分布公式；若显式
+            传入空字典 ``{}``，则退回「只用 top 标签」的兼容降级路径。
     """
     from common.agent_base import PerceptionAgent
 
     conf = prob if confidence is None else confidence
+    dist = _distribution(label, prob) if prob_dist is None else dict(prob_dist)
 
     class _Fake(PerceptionAgent):
         agent_id_ = agent_id
@@ -307,6 +343,7 @@ def fake_agent(
                 agent_id=agent_id,
                 ts=ts,
                 frame_id=frame_id,
+                prob_dist=dist,
             )
 
     _Fake.agent_id = agent_id

@@ -7,15 +7,18 @@ from __future__ import annotations
 
 import pytest
 
-from common.mock.generator import get_scenario, scenario_frame
+from common.config import load_config
+from common.mock.generator import SCENARIOS, get_scenario, scenario_frame
 from common.perception_types import (
     AGENT_BEHAVIOR,
     AGENT_EXPRESSION,
+    EMOTION_LABELS,
     EmotionLabel,
     EnvContext,
     PerceptionResult,
 )
 from fusion.fusion_engine import (
+    REASON_CONFLICT,
     REASON_CONSENSUS,
     REASON_EMPTY,
     REASON_LOW_CONFIDENCE,
@@ -27,7 +30,28 @@ from fusion.weights import normalized_weights, w_behavior, w_face
 
 
 def _result(agent_id: str, label: EmotionLabel, prob: float) -> PerceptionResult:
+    """只填标量 prob 的结果 —— 走融合层的**兼容降级路径**。"""
     return PerceptionResult(label, prob, prob, agent_id)
+
+
+def _dist_result(
+    agent_id: str, dist: dict[EmotionLabel, float]
+) -> PerceptionResult:
+    """填完整分布的结果 —— 走 §3.1 的 ``S(ℓ) = Σ w_i·P_i(ℓ)`` 公式。
+
+    标签与标量 ``prob`` 取分布中的 argmax，保证与契约自洽。
+    """
+    label = max(dist, key=lambda item: dist[item])
+    return PerceptionResult(
+        label, dist[label], dist[label], agent_id, prob_dist=dist
+    )
+
+
+def _p(expr_dist: dict[EmotionLabel, float], beh_dist: dict[EmotionLabel, float]):
+    return [
+        _dist_result(AGENT_EXPRESSION, expr_dist),
+        _dist_result(AGENT_BEHAVIOR, beh_dist),
+    ]
 
 
 # ----------------------------------------------------------------------
@@ -279,6 +303,257 @@ class TestFusionMetadata:
 
 
 # ----------------------------------------------------------------------
+# 完整分布路径（算法文档 §3.1）
+# ----------------------------------------------------------------------
+
+
+class TestFullDistributionFusion:
+    """``S(ℓ) = Σ w_i(E)·P_i(ℓ)`` —— 每个标签收到**所有**通道的加权贡献。
+
+    这是本轮修复的核心：旧实现只在各路 top 标签上累加 ``w_i·prob_i``，等价于
+    加权多数投票，会把第二名候选的票数整块丢弃。
+    """
+
+    def test_matches_documented_formula(self) -> None:
+        expr = {
+            EmotionLabel.FOCUSED: 0.6,
+            EmotionLabel.CONFUSED: 0.3,
+            EmotionLabel.DISTRACTED: 0.1,
+        }
+        beh = {
+            EmotionLabel.FOCUSED: 0.5,
+            EmotionLabel.CONFUSED: 0.4,
+            EmotionLabel.DISTRACTED: 0.1,
+        }
+        env = EnvContext(0.8, 0.2, 0.6)  # E=E0 → 权重 0.5 : 0.5
+        out = FusionEngine().fuse(_p(expr, beh), env)
+
+        w = out.weights
+        expected = {
+            label: w[AGENT_EXPRESSION] * expr[label] + w[AGENT_BEHAVIOR] * beh[label]
+            for label in EMOTION_LABELS
+        }
+        winner = max(expected, key=expected.get)
+        assert out.label is winner
+        assert out.confidence == pytest.approx(expected[winner])
+
+    def test_distribution_reveals_hidden_conflict(self) -> None:
+        """同样的 top 标签与标量概率，完整分布能看出分歧，降级路径看不出。
+
+        回归背景：旧实现下这两帧被判为「表情胜出」，实际上两路对
+        ``FOCUSED`` / ``CONFUSED`` 的支持几乎对等，属于证据不足。
+        """
+        expr = {
+            EmotionLabel.FOCUSED: 0.65,
+            EmotionLabel.CONFUSED: 0.30,
+            EmotionLabel.DISTRACTED: 0.05,
+        }
+        beh = {
+            EmotionLabel.FOCUSED: 0.15,
+            EmotionLabel.CONFUSED: 0.65,
+            EmotionLabel.DISTRACTED: 0.20,
+        }
+        env = EnvContext(0.8, 0.2, 0.6)
+
+        full = FusionEngine().fuse(_p(expr, beh), env)
+        legacy = FusionEngine().fuse(
+            [
+                _result(AGENT_EXPRESSION, EmotionLabel.FOCUSED, 0.65),
+                _result(AGENT_BEHAVIOR, EmotionLabel.CONFUSED, 0.65),
+            ],
+            env,
+        )
+        assert full.label is EmotionLabel.CONFUSED
+        assert legacy.label is EmotionLabel.UNKNOWN
+        assert full.label is not legacy.label
+
+    def test_single_channel_dist_equals_scalar(self) -> None:
+        """单通道权重恒为 1，两条路径必然给出一致结论。"""
+        dist = {
+            EmotionLabel.FOCUSED: 0.7,
+            EmotionLabel.CONFUSED: 0.2,
+            EmotionLabel.DISTRACTED: 0.1,
+        }
+        env = EnvContext(0.8, 0.2, 0.6)
+        with_dist = FusionEngine().fuse([_dist_result(AGENT_EXPRESSION, dist)], env)
+        scalar = FusionEngine().fuse(
+            [_result(AGENT_EXPRESSION, EmotionLabel.FOCUSED, 0.7)], env
+        )
+        assert with_dist.label is scalar.label is EmotionLabel.FOCUSED
+        assert with_dist.confidence == pytest.approx(scalar.confidence)
+
+    def test_fallback_weights_top_label_only(self) -> None:
+        """降级路径：只在 top 标签上累加 w_i·prob_i（保持旧行为）。"""
+        out = FusionEngine().fuse(
+            [
+                _result(AGENT_EXPRESSION, EmotionLabel.FOCUSED, 0.6),
+                _result(AGENT_BEHAVIOR, EmotionLabel.FOCUSED, 0.4),
+            ],
+            EnvContext(0.8, 0.2, 0.6),
+        )
+        # 0.5*0.6 + 0.5*0.4
+        assert out.confidence == pytest.approx(0.5)
+        assert out.label is EmotionLabel.FOCUSED
+
+
+# ----------------------------------------------------------------------
+# 冲突识别（新增级别）
+# ----------------------------------------------------------------------
+
+
+class TestFusionConflict:
+    """得分过于接近时拒判，而不是按内部顺序硬选一个标签。"""
+
+    def test_symmetric_conflict_yields_unknown(self) -> None:
+        out = FusionEngine().fuse(
+            _p(
+                {
+                    EmotionLabel.FOCUSED: 0.05,
+                    EmotionLabel.CONFUSED: 0.90,
+                    EmotionLabel.DISTRACTED: 0.05,
+                },
+                {
+                    EmotionLabel.FOCUSED: 0.90,
+                    EmotionLabel.CONFUSED: 0.05,
+                    EmotionLabel.DISTRACTED: 0.05,
+                },
+            ),
+            EnvContext(0.8, 0.2, 0.6),
+        )
+        assert out.reason == REASON_CONFLICT
+        assert out.label is EmotionLabel.UNKNOWN
+        assert out.confidence == pytest.approx(0.475)
+
+    def test_tie_is_not_biased_to_focused(self) -> None:
+        """回归：旧实现 ``max(key=(score, label.value))`` 在平局时总偏向 focused。
+
+        这里让 ``CONFUSED`` 与 ``DISTRACTED`` 平分且 ``FOCUSED`` 得分为 0，
+        正确行为是拒判为 UNKNOWN。
+        """
+        out = FusionEngine().fuse(
+            _p(
+                {
+                    EmotionLabel.FOCUSED: 0.05,
+                    EmotionLabel.CONFUSED: 0.90,
+                    EmotionLabel.DISTRACTED: 0.05,
+                },
+                {
+                    EmotionLabel.FOCUSED: 0.05,
+                    EmotionLabel.CONFUSED: 0.05,
+                    EmotionLabel.DISTRACTED: 0.90,
+                },
+            ),
+            EnvContext(0.8, 0.2, 0.6),
+        )
+        assert out.label is EmotionLabel.UNKNOWN
+        assert out.reason == REASON_CONFLICT
+
+    def test_clear_winner_not_flagged_as_conflict(self) -> None:
+        out = FusionEngine().fuse(
+            _p(
+                {
+                    EmotionLabel.FOCUSED: 0.90,
+                    EmotionLabel.CONFUSED: 0.05,
+                    EmotionLabel.DISTRACTED: 0.05,
+                },
+                {
+                    EmotionLabel.FOCUSED: 0.85,
+                    EmotionLabel.CONFUSED: 0.10,
+                    EmotionLabel.DISTRACTED: 0.05,
+                },
+            ),
+            EnvContext(0.8, 0.2, 0.6),
+        )
+        assert out.reason != REASON_CONFLICT
+        assert out.label is EmotionLabel.FOCUSED
+
+    def test_conflict_margin_is_configurable(self) -> None:
+        """放大 conflict_margin 后，原本「差距尚可」的结果也会被判为冲突。"""
+        base = load_config()
+        loose = {
+            **base,
+            "negotiation": {**base["negotiation"], "conflict_margin": 0.30},
+        }
+        expr = {
+            EmotionLabel.FOCUSED: 0.6,
+            EmotionLabel.CONFUSED: 0.3,
+            EmotionLabel.DISTRACTED: 0.1,
+        }
+        beh = {
+            EmotionLabel.FOCUSED: 0.5,
+            EmotionLabel.CONFUSED: 0.4,
+            EmotionLabel.DISTRACTED: 0.1,
+        }
+        env = EnvContext(0.8, 0.2, 0.6)
+        # 默认 0.05：FOCUSED 领先 0.20，不判冲突
+        assert FusionEngine(base).fuse(_p(expr, beh), env).reason == REASON_REWEIGHT
+        # 放宽到 0.30：同样的得分差触发冲突
+        assert FusionEngine(loose).fuse(_p(expr, beh), env).reason == REASON_CONFLICT
+
+
+class TestNeutralEnv:
+    """环境未知（``env=None``）时的中性先验。"""
+
+    def test_none_env_gives_equal_weights(self) -> None:
+        out = FusionEngine().fuse(
+            _p(
+                {
+                    EmotionLabel.FOCUSED: 0.90,
+                    EmotionLabel.CONFUSED: 0.05,
+                    EmotionLabel.DISTRACTED: 0.05,
+                },
+                {
+                    EmotionLabel.FOCUSED: 0.90,
+                    EmotionLabel.CONFUSED: 0.05,
+                    EmotionLabel.DISTRACTED: 0.05,
+                },
+            ),
+            None,
+        )
+        assert out.weights[AGENT_EXPRESSION] == pytest.approx(0.5)
+        assert out.weights[AGENT_BEHAVIOR] == pytest.approx(0.5)
+
+    def test_none_env_is_symmetric_not_behavior_biased(self) -> None:
+        """回归：旧实现取 E=0.5，因 0.5 < E0 会得到约 0.31:0.69，偏向行为。
+
+        对称输入（两路等概率、标签相反）在环境未知时应判为无法定论，
+        而不是「因为环境默认偏差 → 行为通道胜出」。
+        """
+        out = FusionEngine().fuse(
+            [
+                _result(AGENT_EXPRESSION, EmotionLabel.CONFUSED, 0.6),
+                _result(AGENT_BEHAVIOR, EmotionLabel.FOCUSED, 0.6),
+            ],
+            None,
+        )
+        assert out.weights[AGENT_EXPRESSION] == pytest.approx(0.5)
+        assert out.label is EmotionLabel.UNKNOWN
+
+
+# ----------------------------------------------------------------------
+# mock 数据必须走完整分布路径
+# ----------------------------------------------------------------------
+
+
+class TestMockCarriesDistribution:
+    def test_every_result_has_valid_distribution(self) -> None:
+        for scenario in SCENARIOS:
+            for results, _env in scenario.frames:
+                for result in results:
+                    assert result.prob_dist, f"{scenario.name} 缺少 prob_dist"
+                    assert set(result.prob_dist) <= set(EMOTION_LABELS)
+                    assert EmotionLabel.UNKNOWN not in result.prob_dist
+                    assert sum(result.prob_dist.values()) == pytest.approx(1.0)
+
+    def test_distribution_argmax_matches_label(self) -> None:
+        for scenario in SCENARIOS:
+            for results, _env in scenario.frames:
+                for result in results:
+                    top = max(result.prob_dist, key=lambda key: result.prob_dist[key])
+                    assert top is result.label, f"{scenario.name} 分布与标签不一致"
+
+
+# ----------------------------------------------------------------------
 # 与 mock 场景的联动（保证场景与算法对得上）
 # ----------------------------------------------------------------------
 
@@ -288,7 +563,7 @@ class TestMockScenarioAlignment:
         "name,expected_reason,expected_label",
         [
             ("consensus", REASON_CONSENSUS, EmotionLabel.FOCUSED),
-            ("conflict", REASON_REWEIGHT, EmotionLabel.CONFUSED),
+            ("conflict", REASON_CONFLICT, EmotionLabel.UNKNOWN),
             ("low_light", REASON_REWEIGHT, EmotionLabel.DISTRACTED),
             ("low_confidence", REASON_LOW_CONFIDENCE, EmotionLabel.UNKNOWN),
             ("occluded", REASON_REWEIGHT, EmotionLabel.CONFUSED),

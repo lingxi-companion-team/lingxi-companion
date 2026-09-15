@@ -8,15 +8,21 @@
 
 weights:
   # 环境驱动动态权重（A 主责）
-  # w_face(E) = 1 / (1 + exp(k * (E - e0)))
-  e0: 0.6            # logistic 中心点：E=0.6 时两路权重相等
+  # w_face(E) = 1 / (1 + exp(-k * (E - e0)))   ← 注意 exp 内是 -k*(E-e0)
+  # 环境越好（E 越大）→ 指数项越小 → w_face 越大。
+  # 若写成 exp(+k*(E-e0)) 则单调性反转（环境越差表情权重反而越高），
+  # 与 fusion/weights.py::w_face 的实现不符。
+  e0: 0.6            # logistic 中心点：E=0.6 时两路权重相等（也是 env=None 时的中性取值）
   k: 8.0             # logistic 斜率：8.0 对应约 0.35~0.85 的过渡带
 
 negotiation:
-  # 三级置信度协商（A 主责）
+  # 三级置信度协商 + 冲突识别（A 主责）
   high_trust_E: 0.8      # 一级：E 高于此值且两路一致 → 直接输出共识
   low_confidence: 0.4    # 三级：最高概率低于此值 → 标记不确定
   occlusion_trigger: 0.5 # 遮挡程度高于此值 → 强制触发二级降权
+  conflict_margin: 0.05  # 冲突识别：首位与次位加权得分差小于此值 → 无法定论
+                         # 输出 UNKNOWN（reason="conflict"），避免用任意规则
+                         # 强行选一个标签。0.05 意为「两条候选的差距不足 5 个百分点」
 
 smoothing:
   # "3中2" 时序平滑（A 主责）
@@ -30,7 +36,11 @@ env_agent:
   blur_tolerance: 0.4    # 模糊度容忍线（拉普拉斯方差归一化后）
   brightness_min: 0.25   # 亮度过低阈值
   brightness_max: 0.95   # 亮度过高（过曝）阈值
-  occlusion_weight: 0.5  # 遮挡项在 env_score 中的合成权重
+  occlusion_weight: 0.0  # 遮挡项在 env_score 中的合成权重（**保持 0，勿改**）
+                         # 遮挡必须只由 fusion 层的 §3.4 补偿机制处理。
+                         # 若这里 >0，遮挡会同时影响 E（§3.2 权重转移）和
+                         # §3.4 的行为增益，被计入两次，补偿强度失控。
+                         # 遮挡只作为 EnvContext.occlusion 单独上报。
 
 expression_agent:
   # 表情智能体（B 主责）

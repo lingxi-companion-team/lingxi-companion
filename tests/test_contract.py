@@ -15,6 +15,7 @@ from common.perception_types import (
     AGENT_ENV,
     AGENT_EXPRESSION,
     AGENT_IDS,
+    EMOTION_LABELS,
     EmotionLabel,
     EnvContext,
     FinalState,
@@ -99,6 +100,143 @@ class TestPerceptionResult:
         r = PerceptionResult(EmotionLabel.FOCUSED, 0.8, 0.9, AGENT_EXPRESSION)
         with pytest.raises(dataclasses.FrozenInstanceError):
             r.prob = 0.5  # type: ignore[misc]
+
+
+class TestProbDist:
+    """``prob_dist`` 完整分布（算法文档 §3.1 的数据来源）。
+
+    背景：仅凭标量 ``prob`` 无法实现 ``S(ℓ) = Σ w_i·P_i(ℓ)``，融合层只能退化
+    为加权多数投票。该字段是修复该问题的契约支撑，因此必须有守卫测试。
+    """
+
+    def test_emotion_labels_excludes_unknown(self) -> None:
+        """规范顺序必须是三类情感，且不含 UNKNOWN 哨兵。"""
+        assert EMOTION_LABELS == (
+            EmotionLabel.FOCUSED,
+            EmotionLabel.CONFUSED,
+            EmotionLabel.DISTRACTED,
+        )
+        assert EmotionLabel.UNKNOWN not in EMOTION_LABELS
+
+    def test_default_is_empty(self) -> None:
+        """向后兼容：不传 prob_dist 时为空，走融合层降级路径。"""
+        r = PerceptionResult(EmotionLabel.FOCUSED, 0.8, 0.9, AGENT_EXPRESSION)
+        assert dict(r.prob_dist) == {}
+
+    def test_valid_distribution_accepted(self) -> None:
+        r = PerceptionResult(
+            EmotionLabel.FOCUSED,
+            0.7,
+            0.9,
+            AGENT_EXPRESSION,
+            prob_dist={
+                EmotionLabel.FOCUSED: 0.7,
+                EmotionLabel.CONFUSED: 0.2,
+                EmotionLabel.DISTRACTED: 0.1,
+            },
+        )
+        assert r.prob_dist[EmotionLabel.FOCUSED] == pytest.approx(0.7)
+        assert sum(r.prob_dist.values()) == pytest.approx(1.0)
+
+    def test_one_hot_accepted(self) -> None:
+        r = PerceptionResult(
+            EmotionLabel.DISTRACTED,
+            1.0,
+            1.0,
+            AGENT_BEHAVIOR,
+            prob_dist={
+                EmotionLabel.FOCUSED: 0.0,
+                EmotionLabel.CONFUSED: 0.0,
+                EmotionLabel.DISTRACTED: 1.0,
+            },
+        )
+        assert r.prob_dist[EmotionLabel.DISTRACTED] == 1.0
+
+    def test_unknown_key_rejected(self) -> None:
+        """UNKNOWN 是哨兵不是情感类别，不允许混进分布。"""
+        with pytest.raises(ValueError, match="UNKNOWN"):
+            PerceptionResult(
+                EmotionLabel.FOCUSED,
+                0.5,
+                0.9,
+                AGENT_EXPRESSION,
+                prob_dist={
+                    EmotionLabel.FOCUSED: 0.5,
+                    EmotionLabel.UNKNOWN: 0.5,
+                },
+            )
+
+    def test_non_enum_key_rejected(self) -> None:
+        with pytest.raises(ValueError, match="EmotionLabel"):
+            PerceptionResult(
+                EmotionLabel.FOCUSED,
+                0.5,
+                0.9,
+                AGENT_EXPRESSION,
+                prob_dist={"focused": 0.5, EmotionLabel.CONFUSED: 0.5},  # type: ignore[dict-item]
+            )
+
+    @pytest.mark.parametrize(
+        "dist",
+        [
+            {EmotionLabel.FOCUSED: 0.5, EmotionLabel.CONFUSED: 0.4},  # 和 0.9
+            {EmotionLabel.FOCUSED: 0.6, EmotionLabel.CONFUSED: 0.6},  # 和 1.2
+        ],
+    )
+    def test_not_normalized_rejected(self, dist: dict) -> None:
+        with pytest.raises(ValueError, match="sum to 1"):
+            PerceptionResult(
+                EmotionLabel.FOCUSED, dist[EmotionLabel.FOCUSED], 0.9,
+                AGENT_EXPRESSION, prob_dist=dist,
+            )
+
+    def test_value_out_of_range_rejected(self) -> None:
+        with pytest.raises(ValueError, match="prob_dist"):
+            PerceptionResult(
+                EmotionLabel.FOCUSED,
+                1.0,
+                0.9,
+                AGENT_EXPRESSION,
+                prob_dist={EmotionLabel.FOCUSED: 1.2, EmotionLabel.CONFUSED: -0.2},
+            )
+
+    def test_label_missing_from_dist_rejected(self) -> None:
+        with pytest.raises(ValueError, match="reported label"):
+            PerceptionResult(
+                EmotionLabel.FOCUSED,
+                0.5,
+                0.9,
+                AGENT_EXPRESSION,
+                prob_dist={
+                    EmotionLabel.CONFUSED: 0.5,
+                    EmotionLabel.DISTRACTED: 0.5,
+                },
+            )
+
+    def test_prob_must_match_dist(self) -> None:
+        """标量 prob 与分布必须自洽，否则融合层会用错数值。"""
+        with pytest.raises(ValueError, match="must equal"):
+            PerceptionResult(
+                EmotionLabel.FOCUSED,
+                0.8,  # ≠ 0.6
+                0.9,
+                AGENT_EXPRESSION,
+                prob_dist={
+                    EmotionLabel.FOCUSED: 0.6,
+                    EmotionLabel.CONFUSED: 0.4,
+                },
+            )
+
+    def test_frozen_still_holds_with_dist(self) -> None:
+        r = PerceptionResult(
+            EmotionLabel.FOCUSED,
+            0.6,
+            0.9,
+            AGENT_EXPRESSION,
+            prob_dist={EmotionLabel.FOCUSED: 0.6, EmotionLabel.CONFUSED: 0.4},
+        )
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            r.prob_dist = {}  # type: ignore[misc]
 
 
 class TestEnvContext:
