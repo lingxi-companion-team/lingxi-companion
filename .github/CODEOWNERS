@@ -14,71 +14,88 @@
 #   - 路径以 / 开头 = 相对仓库根；结尾带 / 表示该目录下全部内容。
 #   - 同一行可写多个 owner：**任一**批准即可满足要求（不是全部）。
 #   - owner 必须是**已有本仓库写权限**的账号（@用户名）或 Team（@org/team）。
-#     本组织**没有创建任何 Team**，只能用个人账号。
-#   - 含无效 owner 的行会被 GitHub 整行跳过。校验方式：
+#     本组织**没有创建任何 Team**，只能用个人账号。校验方式：
 #     gh api repos/lingxi-companion-team/lingxi-companion/codeowners/errors
 #
-# ⚠️ 两条已知局限（别指望它做它做不到的事）
+# ═══════════════════════════════════════════════════════════════════════════
+# 规则一：每条路径 **3 个 owner**（槽位顺序 = 主责人排在前面）
+# ═══════════════════════════════════════════════════════════════════════════
+# 为什么必须是 3 而不是 2：
+#   GitHub 有一条硬规则 —— **Pull request authors cannot approve their own
+#   pull requests.** 推论很危险：若某路径只有 2 个 owner，而那个「非作者」
+#   恰好不在线，这个 PR 就只能干等，**没有任何人可以放行**。
+#   典型场景：A 提 PR 改融合层（owner = A + C），此时 C 已下线 →
+#   合并按钮一直灰着，而且**不给任何原因提示**，极难排查。
+#   补到 3 个 owner 后，「有一人不在线」仍有第三个人可以批准。
 #
-#   1. **作者不能批准自己的 PR**（GitHub 硬规则）。因此若某路径**只有作者
-#      一个 owner**，该 PR 的 code owner 要求将**永远无法满足**（死锁）。
-#      → 所以下面每条路径都至少留 **2 个 owner**，保证总有「非作者」可批。
-#      → 将来若某目录只留 1 个 owner，务必确认该作者不会改自己这块。
+# ═══════════════════════════════════════════════════════════════════════════
+# 规则二：分清「整行作废」与「单个 owner 不生效」—— 写错会**静默失效**
+# ═══════════════════════════════════════════════════════════════════════════
+#   - **语法非法**（空 owner、`@<占位文字>` 这类）→ **整行被跳过**。
+#     后果是该路径等于**没有 owner**，比不写更糟：看着有人管，实际没人管。
+#     → 所以**永远不要用占位符占位**；未定的账号只能写进注释。
+#   - **用户不存在 / 写权限不足** → 只是**这一个 owner 不生效**，
+#     整行依然有效，其余 owner 照常担责，**不会造成死锁**。
+#   @zz985443（B）目前属于后一种 —— 邀请已发出但对方尚未接受，
+#   因此把它写进文件是**安全**的，只是要等对方接受后才真正开始生效。
 #
-#   2. CODEOWNERS 只能要求「所列 owner 中**至少一人**批准」，
-#      **无法**表达「冻结文件必须三人全部批准」。后者只能靠流程纪律
-#      （见 不推送/docs/feature-branch-workflow.md §6）。
+# ═══════════════════════════════════════════════════════════════════════════
+# 规则三：CODEOWNERS 表达不了「三人全批」
+# ═══════════════════════════════════════════════════════════════════════════
+# 它只能要求「所列 owner 中**至少一人**批准」，无法表达「冻结文件必须三人全批」。
+# 后者只能靠流程纪律（见 不推送/docs/feature-branch-workflow.md §6）。
 #
 # 当前分工（2026-09-15 确认）
 #   A → @lxy770        行为智能体 + 融合层 + 标注规范
 #   C → @rainwind0408  环境智能体 + 前端 + 集成发布
-#   B → **尚未加入协作者**（账号未知）→ 其目录暂走兜底
+#   B → @zz985443      表情智能体 + 流水线  （**邀请待接受，尚未生效**）
 #
 # ⚠️ 要说清的现实：@rainwind0408 是仓库管理员，两个 ruleset 都给了
 #   Admin bypass，所以 **CODEOWNERS 技术上拦不住 C 自己**。
-#   这道门禁真正约束的是 @lxy770（write 权限，无 bypass），
-#   以及将来以 write 身份加入的 B。
+#   这道门禁真正约束的是 @lxy770 / @zz985443（write 权限，无 bypass）。
 #
 # ---------------------------------------------------------------------------
 
 # ── 兜底：未被下面规则单独覆盖的路径 ───────────────────────────────────
-# 现阶段只有两个可审阅账号，故先兜底到「任一可写成员」，
-# 保证 require_code_owner_review 立刻具备实际约束力（而不是空转）。
-*                             @rainwind0408 @lxy770
+*                             @rainwind0408 @lxy770 @zz985443
 
 # ── 成员 A（@lxy770）────────────────────────────────────────────────────
-/agents/behavior/             @lxy770 @rainwind0408
-/fusion/                      @lxy770 @rainwind0408
-/tests/agents/                @lxy770 @rainwind0408
-/tests/fusion/                @lxy770 @rainwind0408
-/docs/annotation_spec/        @lxy770 @rainwind0408
+/agents/behavior/             @lxy770 @rainwind0408 @zz985443
+/fusion/                      @lxy770 @rainwind0408 @zz985443
+/tests/agents/                @lxy770 @rainwind0408 @zz985443
+/tests/fusion/                @lxy770 @rainwind0408 @zz985443
+/docs/annotation_spec/        @lxy770 @rainwind0408 @zz985443
 
 # ── 成员 C（@rainwind0408）──────────────────────────────────────────────
-/agents/env/                  @rainwind0408 @lxy770
-/app/                         @rainwind0408 @lxy770
-/common/mock/                 @rainwind0408 @lxy770
-/tests/stress/                @rainwind0408 @lxy770
-/docs/reports/                @rainwind0408 @lxy770
+/agents/env/                  @rainwind0408 @lxy770 @zz985443
+/app/                         @rainwind0408 @lxy770 @zz985443
+/common/mock/                 @rainwind0408 @lxy770 @zz985443
+/tests/stress/                @rainwind0408 @lxy770 @zz985443
+/docs/reports/                @rainwind0408 @lxy770 @zz985443
 
-# ── 成员 B：尚未加入协作者 ──────────────────────────────────────────────
-# 非协作者的 owner 会被忽略（等于没写），所以先留空、走上面的兜底 `*`。
-# B 加入后取消注释、填入账号即可（每行仍保留第二个 owner，避免自批死锁）：
-# /agents/expression/         @<B 的账号> @lxy770
-# /pipeline/                  @<B 的账号> @lxy770
-# /tests/pipeline/            @<B 的账号> @lxy770
+# ── 成员 B（@zz985443）──────────────────────────────────────────────────
+# 邀请已发出（2026-09-13，write 权限）。对方接受邀请后**自动生效**，
+# 无需再改本文件 —— 这正是「权限不足只是单个 owner 不生效，整行仍有效」的用法。
+/agents/expression/           @zz985443 @lxy770 @rainwind0408
+/pipeline/                    @zz985443 @lxy770 @rainwind0408
+/tests/pipeline/              @zz985443 @lxy770 @rainwind0408
 
 # ── 共享冻结层：改一行需三方评审（见 workflow §6）──────────────────────
-# 这两行列出的是「三人」，但 CODEOWNERS 只能要求其中一人批准，
+# 这三行列出三人，但 CODEOWNERS 只能要求其中一人批准，
 # 实际作用只是「任何改动至少惊动一名 owner」，无法自动强制三人全批。
-/common/perception_types.py   @lxy770 @rainwind0408
-/common/agent_base.py         @lxy770 @rainwind0408
-/common/config.py             @lxy770 @rainwind0408
+/common/perception_types.py   @lxy770 @rainwind0408 @zz985443
+/common/agent_base.py         @lxy770 @rainwind0408 @zz985443
+/common/config.py             @lxy770 @rainwind0408 @zz985443
 
-# ── 门禁自身：由管理员单独持有 ─────────────────────────────────────────
-# 否则成员可以自行修改 CODEOWNERS / CI / 门禁阈值来放宽约束（自授权）。
-# GitHub 官方建议原文：
-#   "To protect a repository fully against unauthorized changes, you also
-#    need to define an owner for the CODEOWNERS file itself."
+# ── 门禁自身：**有意保持「只有管理员一人」**（3 人规则的唯一例外）──────
+# 这里不是「忘了补第 3 个人」，是刻意保留：
+#   若把成员列为门禁文件的 owner，成员之间就能互相批准对 CI / CODEOWNERS /
+#   覆盖率门槛的修改 —— 等于把「谁能放宽门禁」交给了被门禁约束的人（自授权）。
+#   GitHub 官方建议原文：
+#     "To protect a repository fully against unauthorized changes, you also
+#      need to define an owner for the CODEOWNERS file itself."
+# 可用性并未因此下降：管理员有 Admin bypass，任何情况下都能自行放行，
+# 不存在「没人能批」的死锁。所以它不需要第 3 个 owner。
 #
 # ⚠️ 代价：管理员自己改这些文件时，因为「不能自批」会看到 Merging is blocked，
 #   需用 Admin bypass 合并。这是**刻意的摩擦** —— 碰门禁就该有明确信号。
