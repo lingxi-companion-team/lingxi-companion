@@ -1,0 +1,68 @@
+# 灵犀学伴 —— 代码归属（CODEOWNERS）
+#
+# 作用：配合分支 ruleset 中的 require_code_owner_review 生效。
+#   命中某条规则的 PR，必须得到**该行所列 code owner 之一**的 approve 才能合并。
+#   没有本文件时，require_code_owner_review 是空转的（GitHub 无从判断谁是 owner）。
+#
+# 读取位置：GitHub 读取 **PR 目标分支**上的本文件。
+#   日常 PR 的目标是 develop，因此本文件必须存在于 develop；
+#   同时保留在 main 上，供 release/* → main 的发布 PR 使用。
+#
+# 语法要点：
+#   - 一个路径**后出现的规则覆盖先出现的**（后匹配优先，不是最精确优先）。
+#   - 因此「先写兜底 * ，再写具体目录」是正确顺序。
+#   - 路径以 / 开头 = 相对仓库根目录；结尾带 / 表示目录下全部内容。
+#   - owner 必须是**已拥有本仓库写权限的用户**（@用户名）或组织团队（@org/team）。
+#     本组织当前**没有创建任何 Team**，因此只能用个人账号。
+#   - 若某行含无效 owner，GitHub 会忽略该行（并在仓库 Rules 页提示错误）。
+#
+# ⚠️ 已知局限（重要）：
+#   CODEOWNERS 只能要求「所列 owner 中**至少一人**批准」，
+#   **无法**表达「冻结文件必须三人全部批准」。后者的约束仍需靠流程纪律
+#   （见 不推送/docs/feature-branch-workflow.md §6），CODEOWNERS 无法替代。
+#
+# ---------------------------------------------------------------------------
+
+# ── 兜底：所有未被下面规则单独覆盖的路径 ────────────────────────────────
+# 现阶段仅有两个可审阅的账号，故先兜底到「任一可写成员」，
+# 保证 require_code_owner_review 立刻具备实际约束力（而非空转）。
+*                       @rainwind0408 @lxy770
+
+# ── 按职责目录细分归属 ──────────────────────────────────────────────────
+# TODO(待补)：组织暂无 Team，且第三位成员的 GitHub 账号尚未加入协作者，
+#   因此下面按 A / B / C 的目录归属暂时以注释形式留档，
+#   待三个账号齐备后取消注释、把 <...> 替换为真实用户名，即可让
+#   「越界改动」在 PR 阶段被自动拦下（审查人必须是该目录的 owner）。
+
+# 成员 A：行为智能体 + 融合层 + 标注规范
+# /agents/behavior/     @<A 的 GitHub 账号>
+# /fusion/              @<A 的 GitHub 账号>
+# /docs/annotation_spec/ @<A 的 GitHub 账号>
+# /tests/agents/        @<A 的 GitHub 账号>
+# /tests/fusion/        @<A 的 GitHub 账号>
+
+# 成员 B：表情智能体 + 推理流水线
+# /agents/expression/   @<B 的 GitHub 账号>
+# /pipeline/            @<B 的 GitHub 账号>
+# /tests/pipeline/      @<B 的 GitHub 账号>
+
+# 成员 C：环境智能体 + 前端 + 集成与发布
+# /agents/env/          @<C 的 GitHub 账号>
+# /app/                 @<C 的 GitHub 账号>
+# /common/mock/         @<C 的 GitHub 账号>
+# /tests/stress/        @<C 的 GitHub 账号>
+# /docs/reports/        @<C 的 GitHub 账号>
+
+# ── 共享冻结层：改一行需三方评审（见 workflow §6）────────────────────────
+# 说明：这里列出的是「三人」，但 CODEOWNERS 只能要求其中一人批准，
+#   故该行的实际作用是「任何改动至少惊动一名 owner」，
+#   仍无法自动强制三人全批。真正的强制靠流程约定。
+# /common/perception_types.py  @rainwind0408 @lxy770
+# /common/agent_base.py        @rainwind0408 @lxy770
+# /common/config.py            @rainwind0408 @lxy770
+
+# ── 协作与 CI 自身 ──────────────────────────────────────────────────────
+# 改 CI / 保护配置属于「规则本身的改动」，理应最严。
+# /configs/thresholds.yaml     @rainwind0408 @lxy770
+# /.github/                    @rainwind0408 @lxy770
+# /CONTRIBUTING.md             @rainwind0408 @lxy770
