@@ -13,9 +13,85 @@ concurrency:
   group: tests-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
 jobs:
+  # ── 门禁 0：私有资料防泄漏 ───────────────────────────────────────
+  # 仓库是 public，而 .gitignore 只能防「误加」，防不住 `git add -f`。
+  # 这里直接检查这些目录里是否真的没有任何文件被 git 跟踪。
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: 私有资料不得入库
+        run: |
+          # `-c core.quotePath=false` 是必须的：git 默认会把含中文的路径
+          # 转义成 \344\270\215… 形式，那样下面的 grep 永远匹配不到，
+          # 这道门禁会静默失效。已实测验证。
+          leaked="$(git -c core.quotePath=false ls-files \
+            | grep -E '^(不推送|文档|\.workbuddy)/' || true)"
+          if [ -n "$leaked" ]; then
+            printf '被跟踪的私有文件：\n%s\n' "$leaked"
+            echo "::error::私有资料目录中出现被 git 跟踪的文件，必须从仓库移出"
+            exit 1
+          fi
+          echo "OK：私有目录未入库"
+
+  # ── 门禁 1：静态检查（lint + 格式）──────────────────────────────
+  # 规则集与行宽在 pyproject.toml 的 [tool.ruff] 段显式声明。
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: 配置 Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+
+      - name: ruff check
+        run: python -m ruff check .
+
+      - name: ruff format --check
+        run: python -m ruff format --check .
+
+  # ── 门禁 2：静态类型检查 ───────────────────────────────────────
+  typecheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: 配置 Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+
+      - name: mypy
+        run: python -m mypy
+
+  # ── 门禁 3：测试 + 覆盖率门槛 ─────────────────────────────────
+  # job id 必须保持为 `pytest`：required status check 的 context
+  # 是 `pytest (3.10)` / `pytest (3.12)`，改名会让门禁永远无法满足。
   pytest:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -36,5 +112,11 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements-dev.txt
 
-      - name: 运行测试
-        run: python -m pytest -q
+      - name: 运行测试 + 覆盖率门槛
+        run: >-
+          python -m pytest
+          --strict-markers
+          --strict-config
+          --cov
+          --cov-report=term-missing
+          --cov-fail-under=80

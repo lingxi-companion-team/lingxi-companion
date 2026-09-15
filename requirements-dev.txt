@@ -1,2 +1,15 @@
+# 开发与 CI 依赖。
+#
+# CI（.github/workflows/tests.yml）只安装本文件，因此这里写的每一项
+# 都可能成为门禁的一部分 —— 新增工具时请同步更新 workflow 的 job。
 numpy>=1.24
 pytest>=8.0
+
+# 静态检查：lint + 代码格式（ruff format --check）
+ruff>=0.16
+
+# 静态类型检查
+mypy>=1.11
+
+# 覆盖率：CI 用它执行 --cov-fail-under 门槛
+pytest-cov>=5.0
