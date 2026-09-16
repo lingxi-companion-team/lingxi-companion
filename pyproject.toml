@@ -7,7 +7,24 @@ name = "lingxi-companion"
 version = "0.1.0"
 description = "Edge multi-agent affective perception prototype for online learning"
 requires-python = ">=3.10"
-dependencies = ["numpy>=1.24"]
+# 运行时依赖 —— **必须与 requirements.txt 保持同一套库、同一批下限**。
+# 二者分工不同，不要只改一边：
+#   · 这里            → 供 `pip install -e .` / `pip install .` 使用
+#   · requirements.txt → 供「按 README 搭环境」使用，且能携带 pip 的索引选项
+#                        （CI **不**安装它，见 .github/workflows/tests.yml）
+#
+# ⚠️ pyproject 表达不了 `--extra-index-url`，因此从 PyPI 装 torch 会拿到
+#    捆绑 CUDA / cuDNN / NCCL 的默认 wheel（Linux 上落盘数 GB），
+#    而本项目是「端侧纯视觉、普通 CPU」运行。用 pip 装本包时请显式带 CPU 源：
+#       pip install -e . --extra-index-url https://download.pytorch.org/whl/cpu
+#    或者直接走 README 的方式（requirements.txt 里已经挂好该源）。
+dependencies = [
+    "numpy>=1.24",
+    "torch>=2.2",
+    "onnxruntime>=1.17",
+    "opencv-python>=4.9",
+    "streamlit>=1.31",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

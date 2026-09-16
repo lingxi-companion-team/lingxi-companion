@@ -85,12 +85,20 @@ pytest -q
 
 | 文件 | 内容 | 谁需要装 |
 |:--|:--|:--|
-| `requirements.txt` | 运行时库：`torch`、`onnxruntime`、`opencv-python`、`streamlit` | 本地开发 / 部署 |
+| `requirements.txt` | 运行时库：`numpy`、`torch`、`onnxruntime`、`opencv-python`、`streamlit` | 本地开发 / 部署 |
 | `requirements-dev.txt` | 工具链：`ruff`、`mypy`、`pytest`、`pytest-cov` | 本地开发 / **CI** |
 
 CI 只安装 `requirements-dev.txt`，因此运行时库的体积不会拖慢门禁检查。
 `requirements.txt` 默认挂官方 CPU-only 源安装 `torch` —— 本项目在普通 CPU 上
 以端侧纯视觉方式运行，不需要 GPU，这样可以避开数 GB 的 CUDA 组件。
+
+> `requirements.txt` 里的运行时依赖与 `pyproject.toml` 的 `[project] dependencies`
+> 保持一致，两者改动要同步。若改用可编辑安装，请手动带上同一个 CPU 源 ——
+> `pyproject.toml` 表达不了 pip 的索引选项：
+>
+> ```powershell
+> pip install -e . --extra-index-url https://download.pytorch.org/whl/cpu
+> ```
 
 真实模型和端到端应用将在接口稳定后逐步加入。模型权重、原始视频和本地虚拟环境不提交到 Git 仓库。
 

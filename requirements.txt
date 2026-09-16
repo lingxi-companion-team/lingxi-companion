@@ -1,5 +1,9 @@
 # 运行时依赖（模型推理 + 采集 + 前端）。
 #
+# ⚠️ 本清单必须与 `pyproject.toml` 的 `[project] dependencies` **保持一致**
+#    （同一套库、同一批版本下限）—— 改了一边就要改另一边，否则
+#    「按 README 搭环境」和 `pip install -e .` 会得到两套不同的环境。
+#
 # ── 与 requirements-dev.txt 的分工 ──────────────────────────────────────
 #   requirements.txt      本文件。跑系统自身需要的库，体积大，**CI 不安装**。
 #   requirements-dev.txt  工具链（ruff / mypy / pytest / pytest-cov），
@@ -16,12 +20,18 @@
 # ── 本地搭建完整环境：两个文件都要装 ───────────────────────────────────
 #   pip install -r requirements.txt -r requirements-dev.txt
 
+numpy>=1.24
+
 # ── 深度学习框架 ───────────────────────────────────────────────────────
 # torch 从 PyPI 装到的 Linux wheel 会捆绑 CUDA / cuDNN / NCCL / triton 等
 # 组件（落盘数 GB），而本项目是「端侧纯视觉、普通 CPU」运行，用不到 GPU。
 # 因此额外挂上官方 CPU-only 源：该源对 win_amd64 / manylinux / macosx
 # 三平台都提供 `+cpu` 构建。pip 认为 `2.14.0+cpu` 高于 `2.14.0`，
 # 故会自动优先选中 CPU 版，拿不到时再回落到 PyPI。
+#
+# ⚠️ 这一行是 pip 的索引选项，`pyproject.toml` **表达不了**它。
+#    所以用 `pip install -e .` 装本包时请手动带上同一个源：
+#      pip install -e . --extra-index-url https://download.pytorch.org/whl/cpu
 --extra-index-url https://download.pytorch.org/whl/cpu
 
 torch>=2.2
@@ -38,8 +48,8 @@ opencv-python>=4.9
 # 就是给这个前端用的。
 streamlit>=1.31
 
-# ── 关于 numpy ─────────────────────────────────────────────────────────
-# numpy 同属运行时依赖（pyproject.toml 的 [project] dependencies 也声明了它），
-# 但它同时被 CI 使用，而 CI 只装 requirements-dev.txt ——
-# 为保持 CI 现有行为不变，它仍声明在 requirements-dev.txt 中，
-# 此处刻意不重复声明，避免同一依赖在两处各写一个下限而日后漂移。
+# ── 关于 numpy 为什么会同时出现在两个文件里 ─────────────────────────────
+# 它本来就是运行时依赖（见上面第 3 行的一致性约定），所以必须在这里声明。
+# 同时它在 requirements-dev.txt 里还保留着一份：CI 只安装 requirements-dev.txt，
+# 而拆分之前 CI 一直是装到 numpy 的 —— 保留那一份是为了**不改变既有 CI 行为**，
+# 不引入与本次拆分无关的变化。两处下限写的是同一个值，需要一起改。

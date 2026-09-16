@@ -10,6 +10,11 @@
 #
 # 本地搭建完整环境（两个文件都要装）：
 #   pip install -r requirements.txt -r requirements-dev.txt
+
+# ⚠️ numpy 是**唯一的例外**：它本身是运行时依赖（requirements.txt 与
+#    pyproject.toml 的 [project] dependencies 都声明了它），但因为 CI 只安装
+#    本文件、且拆分之前 CI 一直是装到 numpy 的，这里刻意保留一份，
+#    以免本次拆分顺带改变既有的 CI 环境。下限与 requirements.txt 保持一致。
 numpy>=1.24
 pytest>=8.0
 
