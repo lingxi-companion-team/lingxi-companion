@@ -1,7 +1,15 @@
-# 开发与 CI 依赖。
+# 开发与 CI 依赖（**只管工具链，不放运行时库**）。
 #
-# CI（.github/workflows/tests.yml）只安装本文件，因此这里写的每一项
-# 都可能成为门禁的一部分 —— 新增工具时请同步更新 workflow 的 job。
+# CI（.github/workflows/tests.yml）的 4 个 job 步骤都只安装本文件，因此
+# 这里写的每一项都会成为门禁的一部分 —— 新增工具时请同步更新 workflow 的 job。
+#
+# ⚠️ 不要往本文件里加 torch / onnxruntime / opencv / streamlit 这类重依赖：
+#    它们体积在 GB 级，会让 4 个 job 各下载一次，`lint`（timeout 5 分钟）
+#    会直接超时；而且 CI 跑的门禁根本不 import 它们。
+#    运行时依赖一律写进 requirements.txt。二者分工见该文件顶部说明。
+#
+# 本地搭建完整环境（两个文件都要装）：
+#   pip install -r requirements.txt -r requirements-dev.txt
 numpy>=1.24
 pytest>=8.0
 

@@ -1,0 +1,45 @@
+# 运行时依赖（模型推理 + 采集 + 前端）。
+#
+# ── 与 requirements-dev.txt 的分工 ──────────────────────────────────────
+#   requirements.txt      本文件。跑系统自身需要的库，体积大，**CI 不安装**。
+#   requirements-dev.txt  工具链（ruff / mypy / pytest / pytest-cov），
+#                         **CI 只安装这一个文件**。
+#
+# 为什么必须拆开：
+#   `.github/workflows/tests.yml` 的 4 个 job 步骤（lint、typecheck、
+#   pytest 3.10、pytest 3.12）各自都会 `pip install -r requirements-dev.txt`。
+#   把 torch 这类重依赖写进去，就会有 4 次 GB 级下载，而 `lint` 的
+#   `timeout-minutes` 只有 5 分钟 —— 光装依赖就会超时。
+#   更关键的是：目前 26 个源文件里**一处都没有 import 这些库**
+#   （含 numpy），装进 CI 是纯成本、零门禁收益。
+#
+# ── 本地搭建完整环境：两个文件都要装 ───────────────────────────────────
+#   pip install -r requirements.txt -r requirements-dev.txt
+
+# ── 深度学习框架 ───────────────────────────────────────────────────────
+# torch 从 PyPI 装到的 Linux wheel 会捆绑 CUDA / cuDNN / NCCL / triton 等
+# 组件（落盘数 GB），而本项目是「端侧纯视觉、普通 CPU」运行，用不到 GPU。
+# 因此额外挂上官方 CPU-only 源：该源对 win_amd64 / manylinux / macosx
+# 三平台都提供 `+cpu` 构建。pip 认为 `2.14.0+cpu` 高于 `2.14.0`，
+# 故会自动优先选中 CPU 版，拿不到时再回落到 PyPI。
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+torch>=2.2
+
+# ── 端侧推理运行时 ─────────────────────────────────────────────────────
+onnxruntime>=1.17
+
+# ── 摄像头采集与图像预处理（提供 cv2）──────────────────────────────────
+# 用 opencv-python（自带 GUI/编解码）而非 headless 版：端侧演示需要读摄像头。
+opencv-python>=4.9
+
+# ── 演示前端 ───────────────────────────────────────────────────────────
+# configs/thresholds.yaml 里的 app.refresh_ms、app.show_weights
+# 就是给这个前端用的。
+streamlit>=1.31
+
+# ── 关于 numpy ─────────────────────────────────────────────────────────
+# numpy 同属运行时依赖（pyproject.toml 的 [project] dependencies 也声明了它），
+# 但它同时被 CI 使用，而 CI 只装 requirements-dev.txt ——
+# 为保持 CI 现有行为不变，它仍声明在 requirements-dev.txt 中，
+# 此处刻意不重复声明，避免同一依赖在两处各写一个下限而日后漂移。

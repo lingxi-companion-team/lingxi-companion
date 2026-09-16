@@ -77,9 +77,20 @@ lingxi-companion/
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -U pip
-pip install -r requirements-dev.txt
+pip install -r requirements.txt -r requirements-dev.txt
 pytest -q
 ```
+
+依赖分成两个文件，各有明确分工：
+
+| 文件 | 内容 | 谁需要装 |
+|:--|:--|:--|
+| `requirements.txt` | 运行时库：`torch`、`onnxruntime`、`opencv-python`、`streamlit` | 本地开发 / 部署 |
+| `requirements-dev.txt` | 工具链：`ruff`、`mypy`、`pytest`、`pytest-cov` | 本地开发 / **CI** |
+
+CI 只安装 `requirements-dev.txt`，因此运行时库的体积不会拖慢门禁检查。
+`requirements.txt` 默认挂官方 CPU-only 源安装 `torch` —— 本项目在普通 CPU 上
+以端侧纯视觉方式运行，不需要 GPU，这样可以避开数 GB 的 CUDA 组件。
 
 真实模型和端到端应用将在接口稳定后逐步加入。模型权重、原始视频和本地虚拟环境不提交到 Git 仓库。
 
