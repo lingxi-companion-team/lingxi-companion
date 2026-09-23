@@ -91,3 +91,10 @@ exclude_lines = [
     "if TYPE_CHECKING:",
     "raise NotImplementedError",
 ]
+# 纯 GUI 外壳（Tkinter 客户端）：CI 跑在**无显示环境**，这部分代码根本执行不到，
+# 留着只会把覆盖率拖破 80% 门槛。可测规则已全部下沉到 `app/present/`（纯函数）。
+#
+# ⚠️ 必须先于 `app/client/` 的第一行代码存在 —— 否则那个 PR 会一提交就红。
+omit = [
+    "app/client/*",
+]
