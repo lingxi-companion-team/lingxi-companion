@@ -6,7 +6,14 @@ from typing import cast
 
 import pytest
 
-from app.present.colors import DIM_COLOR, STATE_COLORS, color_for, color_for_count, is_dim
+from app.present.colors import (
+    DIM_COLOR,
+    STATE_COLORS,
+    color_for,
+    color_for_count,
+    color_for_key,
+    is_dim,
+)
 from common.perception_types import EMOTION_LABELS, EmotionLabel
 
 
@@ -52,3 +59,13 @@ def test_zero_count_component_is_greyed_out() -> None:
 
 def test_nonzero_count_component_keeps_the_state_color() -> None:
     assert color_for_count(EmotionLabel.FOCUSED, 3) == STATE_COLORS[EmotionLabel.FOCUSED]
+
+
+def test_color_for_key_accepts_wire_format_strings() -> None:
+    """客户端拿到的 ``label`` 是字符串（payload 直接 JSON 序列化），必须能直接用。"""
+    for label in EmotionLabel:
+        assert color_for_key(label.value) == STATE_COLORS[label]
+
+
+def test_color_for_key_falls_back_for_unknown_key() -> None:
+    assert color_for_key("not-a-label") == DIM_COLOR

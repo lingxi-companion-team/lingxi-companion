@@ -114,7 +114,7 @@ class Hub:
 
 
 class _BoundHandler(BaseHTTPRequestHandler):
-    """只读端点 ``GET /snapshot?viewer=<id>``。"""
+    """``GET /snapshot?viewer=<id>``（读）与 ``POST /hidden``（写）。"""
 
     server_version = "LingxiHub/1.0"
 
@@ -134,6 +134,58 @@ class _BoundHandler(BaseHTTPRequestHandler):
             self._respond(404, {"error": f"unknown viewer: {viewer!r}"})
             return
         self._respond(200, payload)
+
+    def do_POST(self) -> None:
+        """写端点 ``POST /hidden``：上报「对同学隐藏」开关（D5）。
+
+        为什么必须有一个写端点：D5 的前端开关若没有回写路径，就是一个「点了没用」的
+        控件 —— 而可见性裁剪在**服务端**（设计稿 §01.1 / §07.2），客户端无法自行生效。
+
+        为什么单开一个端点而不是往 ``GET /snapshot`` 上挂参数：GET 不该有副作用
+        （任何预取/重试都可能意外改写别人的可见性），读写分开也让权限边界将来好收紧。
+        """
+        parsed = urlparse(self.path)
+        if parsed.path != "/hidden":
+            self._respond(404, {"error": "not found"})
+            return
+        try:
+            body = self._read_json()
+        except ValueError as exc:
+            self._respond(400, {"error": str(exc)})
+            return
+
+        participant_id = body.get("participant_id")
+        hidden = body.get("hidden")
+        if not isinstance(participant_id, str) or not participant_id:
+            self._respond(400, {"error": "participant_id must be a non-empty string"})
+            return
+        if not isinstance(hidden, bool):
+            self._respond(400, {"error": "hidden must be a boolean"})
+            return
+
+        try:
+            self._hub.set_hidden(participant_id, hidden)
+        except KeyError:
+            self._respond(404, {"error": f"unknown participant: {participant_id!r}"})
+            return
+        self._respond(200, {"participant_id": participant_id, "hidden": hidden})
+
+    def _read_json(self) -> dict[str, Any]:
+        """读请求体并解析为 JSON 对象；空体 / 非法 JSON / 非对象一律抛 ``ValueError``。"""
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError as exc:
+            raise ValueError("invalid Content-Length header") from exc
+        raw = self.rfile.read(length) if length > 0 else b""
+        if not raw:
+            raise ValueError("empty request body")
+        try:
+            parsed = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError(f"invalid JSON body: {exc}") from exc
+        if not isinstance(parsed, dict):
+            raise ValueError("request body must be a JSON object")
+        return cast(dict[str, Any], parsed)
 
     def _respond(self, status: int, body: Mapping[str, Any]) -> None:
         data = json.dumps(body, ensure_ascii=False).encode("utf-8")

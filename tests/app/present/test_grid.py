@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from app.envelope import ROLE_TEACHER, ParticipantState
-from app.present.grid import grid_cells, sort_key
+from app.present.grid import MAX_GRID_COLUMNS, columns_for, grid_cells, sort_key
 from common.perception_types import EmotionLabel, FinalState
 
 
@@ -68,3 +68,29 @@ def test_sort_key_prefers_students_over_teachers() -> None:
 
 def test_empty_input() -> None:
     assert grid_cells([]) == []
+
+
+def test_columns_for_picks_the_most_square_layout() -> None:
+    """``ceil(sqrt(n))``：4 格 → 2×2，9 格 → 3×3。"""
+    assert columns_for(4) == 2
+    assert columns_for(9) == 3
+
+
+def test_columns_for_degenerate_counts() -> None:
+    """0 / 1 个格子都得给出合法列数（调用方会拿它算版面，不能返回 0）。"""
+    assert columns_for(0) == 1
+    assert columns_for(1) == 1
+    assert columns_for(-3) == 1
+
+
+def test_columns_for_is_capped() -> None:
+    """人数很多时不排成横幅 —— 夹到 ``max_columns``。"""
+    assert columns_for(1000) == MAX_GRID_COLUMNS
+    assert columns_for(64, max_columns=4) == 4
+
+
+def test_columns_for_fits_all_cells() -> None:
+    """列数不能小到放不下 —— 行数 × 列数必须 ≥ 人数。"""
+    for count in range(1, 80):
+        columns = columns_for(count)
+        assert columns * -(-count // columns) >= count

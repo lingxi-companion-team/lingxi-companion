@@ -16,7 +16,7 @@ from typing import Any
 from app.envelope import ParticipantState
 from common.perception_types import EMOTION_LABELS, EmotionLabel
 
-__all__ = ["DISPLAY_LABELS", "LABEL_ORDER", "Summary", "summarize"]
+__all__ = ["DISPLAY_LABELS", "LABEL_ORDER", "LABEL_TEXT", "Summary", "summarize"]
 
 #: 展示用的 4 个状态，**顺序固定**（设计稿 §10.1 d1：0 人分量也保留占位，不随人数增减）。
 #:
@@ -30,6 +30,18 @@ DISPLAY_LABELS: tuple[EmotionLabel, ...] = (*EMOTION_LABELS, EmotionLabel.UNKNOW
 #: 用字符串而不是枚举当键，是为了让 payload 直接可 JSON 序列化，
 #: 不必在传输层再转一道（少一层转换就少一类格式 bug）。
 LABEL_ORDER: tuple[str, ...] = tuple(label.value for label in DISPLAY_LABELS)
+
+#: 状态的**中文展示名**（键 = 线路格式的 ``label``）。
+#:
+#: 文案取自设计稿 §04.1 的四色图例。之所以放在这里而不是客户端里：它是**展示规则**
+#: （与配色同级），而 ``app/client/`` 整体 omit 于覆盖率 —— 规则写在那里就等于没有护栏。
+#: 放这儿还能顺带保证「后端颜色 / 文案」与「前端渲染」用的是同一套键。
+LABEL_TEXT: dict[str, str] = {
+    EmotionLabel.FOCUSED.value: "专注",
+    EmotionLabel.CONFUSED.value: "困惑",
+    EmotionLabel.DISTRACTED.value: "分神",
+    EmotionLabel.UNKNOWN.value: "未知",
+}
 
 
 @dataclass(frozen=True)

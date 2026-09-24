@@ -10,7 +10,14 @@ from __future__ import annotations
 
 from common.perception_types import EmotionLabel
 
-__all__ = ["DIM_COLOR", "STATE_COLORS", "color_for", "color_for_count", "is_dim"]
+__all__ = [
+    "DIM_COLOR",
+    "STATE_COLORS",
+    "color_for",
+    "color_for_count",
+    "color_for_key",
+    "is_dim",
+]
 
 #: 四个状态的展示色。
 STATE_COLORS: dict[EmotionLabel, str] = {
@@ -43,3 +50,17 @@ def is_dim(count: int) -> bool:
 def color_for_count(label: EmotionLabel, count: int) -> str:
     """按「状态 + 人数」取色：0 人的分量置灰。"""
     return DIM_COLOR if is_dim(count) else color_for(label)
+
+
+def color_for_key(label: str) -> str:
+    """按**线路格式的字符串键**取状态色。
+
+    客户端从 payload 里拿到的是 ``"focused"`` 这样的字符串而不是枚举，所以需要一个
+    str 入口。未登记的键退回置灰色而不是抛错 —— 与 :func:`color_for` 同一取舍：
+    展示层不为一条异常数据整个崩掉。这个兜底刻意留在**本模块**（有测试），
+    而不是写在 GUI 里 —— ``app/client/`` 整体 omit 于覆盖率，规则写在那儿等于没有护栏。
+    """
+    try:
+        return color_for(EmotionLabel(label))
+    except ValueError:
+        return DIM_COLOR

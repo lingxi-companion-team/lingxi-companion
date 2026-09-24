@@ -9,19 +9,30 @@
 from __future__ import annotations
 
 from app.present.bubble import student_components, teacher_components
-from app.present.colors import DIM_COLOR, STATE_COLORS, color_for, color_for_count, is_dim
-from app.present.grid import grid_cells, sort_key
-from app.present.summary import DISPLAY_LABELS, LABEL_ORDER, Summary, summarize
+from app.present.colors import (
+    DIM_COLOR,
+    STATE_COLORS,
+    color_for,
+    color_for_count,
+    color_for_key,
+    is_dim,
+)
+from app.present.grid import MAX_GRID_COLUMNS, columns_for, grid_cells, sort_key
+from app.present.summary import DISPLAY_LABELS, LABEL_ORDER, LABEL_TEXT, Summary, summarize
 from app.present.visibility import visible_to
 
 __all__ = [
     "DIM_COLOR",
     "DISPLAY_LABELS",
     "LABEL_ORDER",
+    "LABEL_TEXT",
+    "MAX_GRID_COLUMNS",
     "STATE_COLORS",
     "Summary",
     "color_for",
     "color_for_count",
+    "color_for_key",
+    "columns_for",
     "grid_cells",
     "is_dim",
     "sort_key",

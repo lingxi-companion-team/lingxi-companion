@@ -1,4 +1,4 @@
-"""``app.hub`` 的测试：按观看者裁剪 payload + 只读端点。
+"""``app.hub`` 的测试：按观看者裁剪 payload + 读写端点。
 
 本文件里两条断言是**整个方案最该守住的**：
 
@@ -11,10 +11,12 @@
 from __future__ import annotations
 
 import json
+import socket
 import threading
 from collections.abc import Iterator
 from urllib.error import HTTPError
-from urllib.request import urlopen
+from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 
 import pytest
 
@@ -259,3 +261,116 @@ def test_endpoint_reflects_a_hidden_toggle_immediately(live_server: tuple[Hub, s
     _, body, _ = _get(f"{base}/snapshot?viewer=s01")
     grid = {cell["participant_id"]: cell for cell in body["grid"]}
     assert grid["s03"]["state"] is None
+
+
+# --------------------------------------------------------------------------
+# 写端点 POST /hidden（D5 开关的上报通道）
+# --------------------------------------------------------------------------
+
+
+def _post(url: str, body: object) -> tuple[int, dict[str, object]]:
+    request = Request(
+        url,
+        data=json.dumps(body).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urlopen(request, timeout=5) as response:
+        return response.status, json.loads(response.read().decode("utf-8"))
+
+
+def _raw_post(base: str, *, headers: str, body: bytes = b"") -> int:
+    """发一条原始 HTTP 请求并返回状态码。
+
+    为什么需要它：``urllib`` 造不出「``Content-Length`` 不是数字」「请求体不是合法
+    UTF-8」这类畸形请求，而这几个分支恰恰是 400 的判定逻辑所在 —— 不测就等于没写。
+    """
+    parsed = urlparse(base)
+    assert parsed.hostname is not None and parsed.port is not None
+    head = f"POST /hidden HTTP/1.1\r\nHost: {parsed.netloc}\r\n{headers}Connection: close\r\n\r\n"
+    with socket.create_connection((parsed.hostname, parsed.port), timeout=5) as sock:
+        sock.sendall(head.encode("ascii") + body)
+        response = b""
+        while b"\r\n" not in response:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            response += chunk
+    return int(response.split(b" ", 2)[1])
+
+
+def test_write_endpoint_turns_hiding_off_end_to_end(live_server: tuple[Hub, str]) -> None:
+    """A6 的传输版：POST 关闭隐藏 → 同学宫格里重新出现该同学的状态。"""
+    hub, base = live_server
+    status, body = _post(f"{base}/hidden", {"participant_id": "s03", "hidden": False})
+    assert status == 200
+    assert body == {"participant_id": "s03", "hidden": False}
+    assert next(p for p in hub.participants if p.participant_id == "s03").hidden is False
+
+    _, snapshot, _ = _get(f"{base}/snapshot?viewer=s01")
+    grid = {cell["participant_id"]: cell for cell in snapshot["grid"]}
+    assert grid["s03"]["state"] is not None, "开关关掉后，同学应重新看得到状态"
+
+
+def test_write_endpoint_is_idempotent(live_server: tuple[Hub, str]) -> None:
+    _, base = live_server
+    for _ in range(2):
+        assert _post(f"{base}/hidden", {"participant_id": "s01", "hidden": True})[0] == 200
+
+
+def test_write_endpoint_404_for_unknown_participant(live_server: tuple[Hub, str]) -> None:
+    _, base = live_server
+    with pytest.raises(HTTPError) as excinfo:
+        _post(f"{base}/hidden", {"participant_id": "ghost", "hidden": True})
+    assert excinfo.value.code == 404
+
+
+def test_write_endpoint_404_for_unknown_path(live_server: tuple[Hub, str]) -> None:
+    _, base = live_server
+    with pytest.raises(HTTPError) as excinfo:
+        _post(f"{base}/elsewhere", {"participant_id": "s01", "hidden": True})
+    assert excinfo.value.code == 404
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param({}, id="no-fields"),
+        pytest.param({"hidden": True}, id="missing-participant-id"),
+        pytest.param({"participant_id": "", "hidden": True}, id="empty-participant-id"),
+        pytest.param({"participant_id": 7, "hidden": True}, id="non-string-participant-id"),
+        pytest.param({"participant_id": "s01"}, id="missing-hidden"),
+        pytest.param({"participant_id": "s01", "hidden": "yes"}, id="non-boolean-hidden"),
+    ],
+)
+def test_write_endpoint_400_for_bad_fields(live_server: tuple[Hub, str], payload: object) -> None:
+    _, base = live_server
+    with pytest.raises(HTTPError) as excinfo:
+        _post(f"{base}/hidden", payload)
+    assert excinfo.value.code == 400
+
+
+@pytest.mark.parametrize(
+    ("headers", "body"),
+    [
+        pytest.param("Content-Length: abc\r\n", b"{}", id="unparsable-content-length"),
+        pytest.param("Content-Length: 0\r\n", b"", id="empty-body"),
+        pytest.param("Content-Length: 3\r\n", b"{o}", id="invalid-json"),
+        pytest.param("Content-Length: 2\r\n", b"[]", id="json-not-an-object"),
+        pytest.param("Content-Length: 2\r\n", b"\xff\xfe", id="not-utf8"),
+        pytest.param("", b"", id="no-content-length-header"),
+    ],
+)
+def test_write_endpoint_400_for_malformed_requests(
+    live_server: tuple[Hub, str], headers: str, body: bytes
+) -> None:
+    """畸形请求必须被挡在 400，而不是把服务端线程打崩。"""
+    _, base = live_server
+    assert _raw_post(base, headers=headers, body=body) == 400
+
+
+def test_server_survives_a_malformed_request(live_server: tuple[Hub, str]) -> None:
+    """写路径报 400 之后，读路径必须照常工作（线程没被打死）。"""
+    _, base = live_server
+    assert _raw_post(base, headers="Content-Length: 0\r\n") == 400
+    assert _get(f"{base}/snapshot?viewer=s01")[0] == 200

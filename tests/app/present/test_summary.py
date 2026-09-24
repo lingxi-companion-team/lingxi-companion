@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 
 from app.envelope import ROLE_TEACHER, ParticipantState
-from app.present.summary import DISPLAY_LABELS, LABEL_ORDER, summarize
+from app.present.summary import DISPLAY_LABELS, LABEL_ORDER, LABEL_TEXT, summarize
 from common.perception_types import EMOTION_LABELS, EmotionLabel, FinalState
 
 
@@ -128,3 +128,16 @@ def test_to_dict_copies_members_into_lists() -> None:
     original = summarize([_student("s01", EmotionLabel.FOCUSED)]).members_by_label["focused"]
     dumped = summarize([_student("s01", EmotionLabel.FOCUSED)]).to_dict()
     assert dumped["members_by_label"]["focused"] == list(original)
+
+
+def test_label_text_covers_exactly_the_display_keys() -> None:
+    """中文展示名的键集必须与分量键集**完全一致**。
+
+    多一个键是死数据，少一个键会让客户端退化成显示英文枚举值 —— 两种都是静默劣化，
+    所以这里用等号断言而不是「包含」。
+    """
+    assert set(LABEL_TEXT) == set(LABEL_ORDER)
+
+
+def test_label_text_has_no_empty_value() -> None:
+    assert all(value.strip() for value in LABEL_TEXT.values())
