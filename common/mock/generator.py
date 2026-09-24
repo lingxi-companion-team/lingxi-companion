@@ -327,8 +327,6 @@ def fake_agent(
     dist = _distribution(label, prob) if prob_dist is None else dict(prob_dist)
 
     class _Fake(PerceptionAgent):
-        agent_id_ = agent_id
-
         def warmup(self) -> None:
             return None
 
@@ -343,6 +341,8 @@ def fake_agent(
                 prob_dist=dist,
             )
 
+    #: ``agent_id`` 是协议要求的类属性；在类体外赋值最清楚，不与类体内的
+    #: ``warmup`` / ``infer`` 混在一起。
     _Fake.agent_id = agent_id
     _Fake.__name__ = f"FakeAgent_{agent_id}"
     return _Fake()
