@@ -18,13 +18,15 @@
 
 ## 当前状态
 
-**接口契约、融合层与多端展示地基已落地；三个智能体与流水线仍在开发中**：
+**接口契约、融合层、多端展示地基与环境智能体（规则版）已落地；表情、行为两路与流水线仍在开发中**：
 
 - 已建立 `main`、`develop` 两条常驻分支，并配置 ruleset 分支保护与 5 项 CI 检查；
 - 已冻结统一感知数据结构（`common/perception_types.py`）与 mock 数据目录；
 - 已实现环境驱动动态权重融合、三级置信度协商与“3 中 2”时序平滑（`fusion/`）；
 - 已实现多端展示地基 `app/`：参与者信封 → 纯函数展示层 → 按观看者裁剪的只读快照端点；
-- `agents/expression`、`agents/behavior`、`agents/env` 与 `pipeline/` 目前仍是空壳；
+- 已实现环境智能体 `agents/env/`：以亮度因子 × 清晰度因子合成环境可信度 $E$，
+  遮挡只上报不参与合成（规则版，模型版待替换）；
+- `agents/expression`、`agents/behavior` 与 `pipeline/` 目前仍是空壳；
 - 尚未提交真实模型、原始视频数据或训练权重。
 
 日常开发从 `develop` 创建短期的 `feature/*` 分支，合并后即删除。
@@ -52,9 +54,10 @@ feature/* → develop → release/* → main
 ```text
 lingxi-companion/
 ├── agents/
-│   ├── behavior/       # 行为智能体
-│   ├── expression/     # 表情智能体
-│   └── env/            # 环境智能体
+│   ├── behavior/       # 行为智能体（空壳）
+│   ├── expression/     # 表情智能体（空壳）
+│   └── env/            # 环境智能体（规则版已实现）
+│       └── agent.py     #   E 值评估：采样 / 度量 / 合成 / 协议适配
 ├── app/                 # 多端展示地基（信封 / 展示层 / 只读快照端点）
 │   ├── envelope.py      #   参与者信封：会话层身份与可见性
 │   ├── hub.py           #   在线表 + 按观看者裁剪 + 只读 HTTP 端点
