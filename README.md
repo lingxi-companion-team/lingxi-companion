@@ -18,11 +18,13 @@
 
 ## 当前状态
 
-仓库目前处于**工程骨架阶段**：
+**接口契约、融合层与多端展示地基已落地；三个智能体与流水线仍在开发中**：
 
-- 已建立 `main`、`develop` 两条常驻分支；
-- 已建立统一感知数据结构和 mock 数据目录；
-- 已建立三个智能体、融合、流水线、前端和测试目录；
+- 已建立 `main`、`develop` 两条常驻分支，并配置 ruleset 分支保护与 5 项 CI 检查；
+- 已冻结统一感知数据结构（`common/perception_types.py`）与 mock 数据目录；
+- 已实现环境驱动动态权重融合、三级置信度协商与“3 中 2”时序平滑（`fusion/`）；
+- 已实现多端展示地基 `app/`：参与者信封 → 纯函数展示层 → 按观看者裁剪的只读快照端点；
+- `agents/expression`、`agents/behavior`、`agents/env` 与 `pipeline/` 目前仍是空壳；
 - 尚未提交真实模型、原始视频数据或训练权重。
 
 日常开发从 `develop` 创建短期的 `feature/*` 分支，合并后即删除。
@@ -53,17 +55,22 @@ lingxi-companion/
 │   ├── behavior/       # 行为智能体
 │   ├── expression/     # 表情智能体
 │   └── env/            # 环境智能体
-├── app/                 # Streamlit 前端与演示入口
+├── app/                 # 多端展示地基（信封 / 展示层 / 只读快照端点）
+│   ├── envelope.py      #   参与者信封：会话层身份与可见性
+│   ├── hub.py           #   在线表 + 按观看者裁剪 + 只读 HTTP 端点
+│   └── present/         #   展示纯函数：宫格 / 汇总 / 气泡 / 配色 / 可见性
 ├── common/              # 共享冻结层（接口契约所在，变更须三方评审）
 │   ├── agent_base.py    #   智能体抽象基类
 │   ├── config.py        #   零依赖配置解析
+│   ├── input_spec.py    #   表 B：感知输入规格（frame 契约）
+│   ├── label_mapping.py #   表 A：上游类别 → 情感分布
 │   ├── mock/            #   mock 数据生成器
 │   └── perception_types.py  # 唯一接口契约
 ├── configs/             # 阈值配置（集中全部可调参数）
 ├── fusion/              # 动态权重融合、时序平滑
 ├── pipeline/            # 采集、推理、传输流水线
 ├── tests/               # 契约/冒烟测试 + 各模块单测与压测
-├── docs/                # 算法、标注和实验文档
+├── docs/                # 算法与数据文档（见下方「文档入口」）
 └── scripts/             # 工具脚本
 ```
 
@@ -85,7 +92,7 @@ pytest -q
 
 | 文件 | 内容 | 谁需要装 |
 |:--|:--|:--|
-| `requirements.txt` | 运行时库：`numpy`、`torch`、`onnxruntime`、`opencv-python`、`streamlit` | 本地开发 / 部署 |
+| `requirements.txt` | 运行时库：`numpy`、`torch`、`onnxruntime`、`opencv-python` | 本地开发 / 部署 |
 | `requirements-dev.txt` | 工具链：`ruff`、`mypy`、`pytest`、`pytest-cov` | 本地开发 / **CI** |
 
 CI 只安装 `requirements-dev.txt`，因此运行时库的体积不会拖慢门禁检查。
@@ -104,7 +111,8 @@ CI 只安装 `requirements-dev.txt`，因此运行时库的体积不会拖慢门
 
 ## 文档入口
 
-- [算法技术文档](docs/algorithm.md)
+- [算法技术文档](docs/algorithm.md) —— 融合权重、协商分级、时序平滑与统一标签体系
+- [数据来源与评测口径](docs/datasets.md) —— 各智能体用哪些数据集、许可限制、划分与基线
 - [贡献指南](CONTRIBUTING.md)
 
 ## 隐私说明

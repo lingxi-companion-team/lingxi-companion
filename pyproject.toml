@@ -23,8 +23,9 @@ dependencies = [
     "torch>=2.2",
     "onnxruntime>=1.17",
     "opencv-python>=4.9",
-    "streamlit>=1.31",
 ]
+# ⚠️ 2026-09-24：此处原有 `streamlit>=1.31`，与 `requirements.txt` 成对移除 ——
+#    多端展示已改为 Tkinter（标准库），代码中一处都没有 import streamlit。
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

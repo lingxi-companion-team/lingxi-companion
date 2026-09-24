@@ -56,8 +56,10 @@ class PerceptionAgent(ABC):
         """对单帧做推理。
 
         Args:
-            frame: 采集侧提供的原始帧（实现方自行决定如何解析；
-                建议同时接受 numpy 数组与 ``None``，后者用于单元测试）。
+            frame: 采集侧提供的原始帧。**格式已由 :mod:`common.input_spec` 定死**
+                （BGR / ``uint8`` / ``[0, 255]`` / ``(H, W, 3)`` / 不缩放不裁剪），
+                不要再各自假设一种格式；需要人脸 ROI 就在本方法内部先裁。
+                ``None`` 是无帧哨兵，用于单测与 mock —— 此时走降级分支，**不得抛异常**。
             ts: 帧时间戳（秒，单调递增）。
             frame_id: 帧序号，同一帧的多路结果必须一致。
 
@@ -97,6 +99,10 @@ class EnvAgent(ABC):
     @abstractmethod
     def assess(self, frame: Any, ts: float, frame_id: int) -> EnvContext:
         """评估单帧的环境质量。
+
+        Args:
+            frame: 同 :meth:`PerceptionAgent.infer` —— 规格见 :mod:`common.input_spec`；
+                降采样等预处理在本方法内部完成。
 
         Returns:
             环境上下文。失败时返回中性值（``env_score = weights.e0``，
