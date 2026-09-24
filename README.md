@@ -18,7 +18,7 @@
 
 ## 当前状态
 
-**接口契约、融合层、多端展示地基与环境智能体（规则版）已落地；表情、行为两路与流水线仍在开发中**：
+**接口契约、融合层、多端展示地基、环境智能体（规则版）与串行集成入口已落地；表情、行为两路与流水线仍在开发中**：
 
 - 已建立 `main`、`develop` 两条常驻分支，并配置 ruleset 分支保护与 5 项 CI 检查；
 - 已冻结统一感知数据结构（`common/perception_types.py`）与 mock 数据目录；
@@ -26,6 +26,9 @@
 - 已实现多端展示地基 `app/`：参与者信封 → 纯函数展示层 → 按观看者裁剪的只读快照端点；
 - 已实现环境智能体 `agents/env/`：以亮度因子 × 清晰度因子合成环境可信度 $E$，
   遮挡只上报不参与合成（规则版，模型版待替换）；
+- 已实现**串行集成主流程** `app/integration/`：帧源（合成帧 / mock 流）→ 三路智能体 → 融合
+  → 平滑 → 前端信封，含逐路降级、日志与 `python -m app.integration` 命令行入口
+  （联调记录见 `docs/reports/integration-2026-09-24.md`）；
 - `agents/expression`、`agents/behavior` 与 `pipeline/` 目前仍是空壳；
 - 尚未提交真实模型、原始视频数据或训练权重。
 
@@ -58,9 +61,10 @@ lingxi-companion/
 │   ├── expression/     # 表情智能体（空壳）
 │   └── env/            # 环境智能体（规则版已实现）
 │       └── agent.py     #   E 值评估：采样 / 度量 / 合成 / 协议适配
-├── app/                 # 多端展示地基（信封 / 展示层 / 只读快照端点）
+├── app/                 # 应用层：多端展示地基 + 串行集成
 │   ├── envelope.py      #   参与者信封：会话层身份与可见性
 │   ├── hub.py           #   在线表 + 按观看者裁剪 + 只读 HTTP 端点
+│   ├── integration/     #   串行集成主流程（帧源 → 三路 → 融合 → 平滑 → 信封）
 │   └── present/         #   展示纯函数：宫格 / 汇总 / 气泡 / 配色 / 可见性
 ├── common/              # 共享冻结层（接口契约所在，变更须三方评审）
 │   ├── agent_base.py    #   智能体抽象基类
@@ -111,6 +115,20 @@ CI 只安装 `requirements-dev.txt`，因此运行时库的体积不会拖慢门
 > ```
 
 真实模型和端到端应用将在接口稳定后逐步加入。模型权重、原始视频和本地虚拟环境不提交到 Git 仓库。
+
+### 跑通串行链路（无需任何第三方依赖）
+
+串行集成入口只用标准库，**装完 `requirements-dev.txt` 就能跑**，不依赖摄像头或模型权重：
+
+```powershell
+python -m app.integration --help                          # 查看全部参数
+python -m app.integration --scenario consensus --frames 6 # 回放 mock 感知流
+python -m app.integration --source synthetic --frames 30  # 合成帧跑全链路（三路真实执行）
+```
+
+表情与行为两路尚未交付，默认由 `common/mock` 的假智能体顶替，运行时会**明文告警**；
+环境路是真实实现。因此它的输出用于验证「链路装配与降级行为」，
+**不代表**融合精度或端到端性能。
 
 ## 文档入口
 

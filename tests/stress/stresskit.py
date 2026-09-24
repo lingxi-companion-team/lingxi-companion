@@ -13,13 +13,17 @@
 目标是抓住**数量级退化**（例如有人把按采样点读取改成遍历全帧像素），
 而不是 certify 某个绝对性能数字 —— 真实指标必须上目标机复测。
 
-为什么合成帧是「按需计算」的
-----------------------------
-真帧（numpy HWC 数组）的构造成本与分辨率成正比。若把构造计入测量，测到的是
-「造数据有多慢」而不是「算法有多慢」；而且 CI 环境里根本没有 numpy。
-`SyntheticFrame` 构造 O(1)，像素在 ``frame[y][x]`` 时才算 —— 这与
-:func:`agents.env.agent.sample_luma` 的真实访问模式一致（只读 32×32 个块中心
-像素），所以能拿它压 1080p 而不付出 600 万次算术的代价。
+合成帧从哪来
+------------
+:class:`~app.integration.sources.SyntheticFrame` 的**定义**放在
+``app/integration/sources.py``，不在这里 —— 它有两个消费者：无摄像头时的全链路
+演示（``python -m app.integration --source synthetic``）与本目录的压测载荷。
+两处各写一份必然分叉（演示看到的画面与压测压的画面会悄悄变成两个东西），
+故本模块只 import 后**原样导出**，``from tests.stress.stresskit import SyntheticFrame``
+这类既有写法继续可用。
+
+它按需计算像素的设计要点见那个类的文档串：真帧的构造成本与分辨率成正比，
+把构造计入测量就变成「测造数据多慢」；而 CI 里根本没有 numpy。
 """
 
 from __future__ import annotations
@@ -31,6 +35,8 @@ from dataclasses import dataclass
 from time import perf_counter
 from typing import Any
 
+from app.integration.sources import TEXTURES, SyntheticFrame
+
 __all__ = [
     "TEXTURES",
     "SyntheticFrame",
@@ -41,93 +47,6 @@ __all__ = [
     "repeat",
     "tail_growth_ratio",
 ]
-
-#: 可用的合成纹理。语义见 :class:`SyntheticFrame`。
-TEXTURES = ("noise", "flat", "smooth")
-
-
-class _DType:
-    """``.dtype.name`` 的最小替身（``common.input_spec`` 只读这个属性）。"""
-
-    name = "uint8"
-
-
-class _SyntheticRow:
-    """``frame[y]`` 的返回值：把 ``row[x]`` 转成按需计算的像素。"""
-
-    __slots__ = ("_frame", "_y")
-
-    def __init__(self, frame: SyntheticFrame, y: int) -> None:
-        self._frame = frame
-        self._y = y
-
-    def __getitem__(self, x: int) -> tuple[int, int, int]:
-        return self._frame.pixel(self._y, x)
-
-
-class SyntheticFrame:
-    """按需计算像素的 BGR 帧替身，可代表任意分辨率。
-
-    三种纹理对应三种极端画面，覆盖环境智能体的三条主要分支：
-
-    ==========  ==========================================================
-    ``noise``   高频充足（失焦的反面）→ ``blur`` 接近 0、``E`` 高
-    ``flat``    整帧同色 → 没有任何细节 → ``blur`` 到顶、``E`` 归零
-    ``smooth``  低频渐变（线性斜坡）→ 拉普拉斯恒为 0，同样是「无细节」
-    ==========  ==========================================================
-
-    ``flat`` 与 ``smooth`` 都表达「没有可用的高频细节」，但前者还会被
-    ``occlusion`` 的平坦块判据扫到（取决于亮度是否极端），后者不会 ——
-    两者并存是为了让压测也能覆盖遮挡分支的不同走向。
-
-    Args:
-        height: 帧高（像素）。
-        width: 帧宽（像素）。
-        texture: 见上表。
-        level: 基准亮度（0–255）。
-        seed: 噪声种子。同一 seed 产出同一画面。
-    """
-
-    def __init__(
-        self,
-        *,
-        height: int = 480,
-        width: int = 640,
-        texture: str = "noise",
-        level: int = 128,
-        seed: int = 0,
-    ) -> None:
-        if texture not in TEXTURES:
-            raise ValueError(f"unknown texture {texture!r}; available: {', '.join(TEXTURES)}")
-        if height < 1 or width < 1:
-            raise ValueError("height / width must be positive")
-
-        self.height = height
-        self.width = width
-        self.texture = texture
-        self.level = level
-        self.seed = seed
-
-        self.shape = (height, width, 3)
-        self.dtype = _DType()
-
-    def __getitem__(self, y: int) -> _SyntheticRow:
-        return _SyntheticRow(self, y)
-
-    def pixel(self, y: int, x: int) -> tuple[int, int, int]:
-        """返回 ``(y, x)`` 处的 BGR 像素（灰度，三分量相同）。"""
-        if self.texture == "flat":
-            value = self.level
-        elif self.texture == "smooth":
-            # 线性斜坡：二阶导为 0 ⇒ 拉普拉斯方差 0 ⇒ blur 到顶。
-            span = max(1, self.height + self.width)
-            value = self.level + ((y + x) * 16) // span
-        else:
-            # 确定性伪随机（整数散列，不用 random 以保持零状态）。
-            mixed = (y * 73856093) ^ (x * 19349663) ^ (self.seed * 83492791)
-            value = (mixed >> 8) & 0xFF
-        value = 0 if value < 0 else (255 if value > 255 else value)
-        return (value, value, value)
 
 
 @dataclass(frozen=True)
