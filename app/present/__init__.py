@@ -17,24 +17,34 @@ from app.present.colors import (
     color_for_key,
     is_dim,
 )
+from app.present.diff import changed_participants
 from app.present.grid import MAX_GRID_COLUMNS, columns_for, grid_cells, sort_key
+from app.present.shape import STATE_SHAPES, shape_for, shape_for_key
+from app.present.status import FRESH_AGING_SECONDS, freshness, offline
 from app.present.summary import DISPLAY_LABELS, LABEL_ORDER, LABEL_TEXT, Summary, summarize
 from app.present.visibility import visible_to
 
 __all__ = [
     "DIM_COLOR",
     "DISPLAY_LABELS",
+    "FRESH_AGING_SECONDS",
     "LABEL_ORDER",
     "LABEL_TEXT",
     "MAX_GRID_COLUMNS",
     "STATE_COLORS",
+    "STATE_SHAPES",
     "Summary",
+    "changed_participants",
     "color_for",
     "color_for_count",
     "color_for_key",
     "columns_for",
+    "freshness",
     "grid_cells",
     "is_dim",
+    "offline",
+    "shape_for",
+    "shape_for_key",
     "sort_key",
     "student_components",
     "summarize",
