@@ -17,6 +17,7 @@ from app.present.colors import (
     color_for_key,
     is_dim,
 )
+from app.present.diag import diag_lines
 from app.present.diff import changed_participants
 from app.present.grid import MAX_GRID_COLUMNS, columns_for, grid_cells, sort_key
 from app.present.scale import (
@@ -52,6 +53,7 @@ __all__ = [
     "color_for_count",
     "color_for_key",
     "columns_for",
+    "diag_lines",
     "freshness",
     "freshness_key",
     "grid_cells",
