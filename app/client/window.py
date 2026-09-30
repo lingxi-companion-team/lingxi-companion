@@ -55,6 +55,7 @@ from app.present import (
     changed_participants,
     color_for_key,
     columns_for,
+    diag_lines,
     freshness_key,
     offline,
     scale_for_width,
@@ -128,6 +129,8 @@ class ClientWindow:
         # 异常分支里 —— 这里只存「当前要画成什么样」的结果。
         self._changed_ids: set[str] = set()
         self._offline = False
+        # Step4 诊断：最近一次成功刷新的耗时（毫秒）；None = 还没成功过 / 上次失败。
+        self._last_refresh_ms: float | None = None
 
         self.win = tk.Toplevel(master)
         self.win.title("灵犀学伴 · 课堂共享宫格")
@@ -217,6 +220,7 @@ class ClientWindow:
     def refresh(self) -> None:
         """取一次快照并重绘。传输失败只改状态栏 + 全格降饱和，不抛出去 —— 界面要能一直活着。"""
         try:
+            t0 = time.perf_counter()
             payload = dict(self._provider())
         except Exception as exc:
             # 传输/服务端的任何异常都不该让窗口崩掉 —— 状态栏提示，下一轮再试。
@@ -224,10 +228,12 @@ class ClientWindow:
             # 「断网」在视觉上可感知，但不用警示红（R6：断联是常态不是警报）。
             # 宫格整体降饱和（_offline=True）：数据不再新鲜，视觉「褪」掉一档。
             self._offline = True
+            self._last_refresh_ms = None
             self._status.set(offline(exc))
             self._status_label.configure(bg=OFFLINE_BG)
             self._render()
             return
+        self._last_refresh_ms = (time.perf_counter() - t0) * 1000.0
         # 更新 payload **之前**算变化格（旧 grid 与新 grid 的签名差）——判定在
         # present.diff（已测），这里只存结果集合供 _make_cell 加粗竖条。
         old_grid = self._payload.get("grid", [])
@@ -619,7 +625,53 @@ class ClientWindow:
             fg=TEXT_MUTED,
             font=FONT_SMALL,
         ).pack(anchor="w", padx=10, pady=(8, 8))
+        self._render_diag()
         self._panel_frame.pack(side="left", anchor="n", padx=(14, 0))
+
+    def _render_diag(self) -> None:
+        """教师端诊断折叠区（Step4）：默认收起，点开显示 ``present.diag_lines`` 输出。
+
+        - 数据源是纯函数 ``diag_lines``（已测），这里只负责折叠/展开与逐行 render；
+        - 默认收起：诊断是给「想盯链路健康」的时刻准备的，不该占日常视野；
+        - 学生端根本进不了 ``_render_summary``（A2：payload 无 summary），所以
+          这个区天然只有教师端有，无需再判角色。
+        """
+        wrap = tk.Frame(self._panel_frame, bg=CARD_BG)
+        wrap.pack(fill="x", padx=10, pady=(0, 8))
+        expanded = getattr(self, "_diag_expanded", False)
+        arrow = "▾" if expanded else "▸"
+        head = tk.Label(
+            wrap,
+            text=f"{arrow} 诊断",
+            bg=CARD_BG,
+            fg=TEXT_MUTED,
+            font=FONT_CAPTION,
+            cursor="hand2",
+            anchor="w",
+        )
+        head.pack(fill="x")
+        head.bind("<Button-1>", lambda _e: self._toggle_diag())
+        if not expanded:
+            return
+        lines = diag_lines(
+            self._payload,
+            viewer=self._viewer_id,
+            now_ts=time.time(),
+            refresh_ms=self._last_refresh_ms,
+        )
+        for line in lines:
+            tk.Label(
+                wrap,
+                text=line,
+                bg=CARD_BG,
+                fg=TEXT_MUTED,
+                font=FONT_CAPTION,
+                anchor="w",
+            ).pack(fill="x", padx=(10, 0))
+
+    def _toggle_diag(self) -> None:
+        self._diag_expanded = not getattr(self, "_diag_expanded", False)
+        self._render()
 
     def _render_icon(self) -> None:
         """最小化态：56×56 的圆 + 「灵」字（背景透明不可用时退回实心方底）。"""
