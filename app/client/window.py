@@ -257,11 +257,20 @@ class ClientWindow:
     def _on_resize(self, event: tk.Event) -> None:
         """窗口尺寸变化时，跨档才重画。
 
-        ``<Configure>`` 在拖动窗口边缘时**每个像素**都触发，但分档缩放意味着
-        绝大多数事件里 ``scale_for_width`` 的返回值不变 —— 只有跨档那一下值得
-        重排。这也避开了最小化/还原瞬间 winfo_width 的抖动。
+        ``<Configure>`` 有两个坑，两个都要挡：
+
+        1. **它不只属于主窗口**：子控件每次改尺寸/位置也会发 ``<Configure>``，
+           Tk 的 bindtag 会把这些事件一并送进本回调（``event.widget`` 是那个
+           子控件而不是顶层窗口）。不挡的话，一次绘制过程中产生的子控件事件
+           会再触发一次绘制 —— 也就是**在事件派发栈里销毁并重建控件**，Tk 会
+           踩到已经释放的对象，直接**原生崩溃**（实测 Windows 上 `mainloop`
+           内 0xC0000005 访问违例；`--selftest` 因为根本不进事件循环，完全
+           测不出来）。
+        2. **只在跨档时重画**：``<Configure>`` 在拖动窗口边缘时**每个像素**都
+           触发，但分档缩放意味着绝大多数事件里 ``scale_for_width`` 的返回值
+           不变 —— 只有跨档那一下值得重排。
         """
-        if self._minimized:
+        if self._minimized or event.widget is not self.win:
             return
         scale = scale_for_width(event.width)
         if scale != self._last_scale:
