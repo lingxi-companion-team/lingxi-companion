@@ -6,7 +6,9 @@
 
 from __future__ import annotations
 
-from app.present.status import FRESH_AGING_SECONDS, freshness, offline
+from typing import Any
+
+from app.present.status import FRESH_AGING_SECONDS, freshness, freshness_key, offline
 from common.perception_types import EmotionLabel, FinalState
 
 
@@ -54,3 +56,52 @@ class TestFreshness:
     def test_aging_above_threshold(self) -> None:
         s = _state(timestamp=1000.0 - (FRESH_AGING_SECONDS + 5.0))
         assert freshness(1000.0, s) == "aging"
+
+
+class TestFreshnessKey:
+    """线路版入口：client 拿到的是 ``to_dict`` 后的 dict，不是 FinalState。
+
+    取值这一步也是规则（所以下沉到 present 并在这里测）；所有「证明不了新鲜」
+    的输入一律按最弱档 "stale" 处理，不抛错。
+    """
+
+    def _wire(self, **over: Any) -> dict[str, Any]:
+        base: dict[str, Any] = {
+            "label": "focused",
+            "confidence": 0.9,
+            "stale": False,
+            "timestamp": 1000.0,
+            "frame_id": 7,
+        }
+        base.update(over)
+        return base
+
+    def test_none_is_stale(self) -> None:
+        assert freshness_key(1000.0, None) == "stale"
+
+    def test_non_mapping_is_stale(self) -> None:
+        # 线路异常时 hub 也可能给出非 dict，不许抛错。
+        assert freshness_key(1000.0, "garbage") == "stale"  # type: ignore[arg-type]
+
+    def test_stale_flag_wins_over_time(self) -> None:
+        assert freshness_key(1000.0, self._wire(stale=True, timestamp=999.9)) == "stale"
+
+    def test_fresh_below_threshold(self) -> None:
+        wire = self._wire(timestamp=1000.0 - (FRESH_AGING_SECONDS - 0.1))
+        assert freshness_key(1000.0, wire) == "fresh"
+
+    def test_aging_at_and_above_threshold(self) -> None:
+        assert freshness_key(1000.0, self._wire(timestamp=1000.0 - FRESH_AGING_SECONDS)) == "aging"
+        assert (
+            freshness_key(1000.0, self._wire(timestamp=1000.0 - (FRESH_AGING_SECONDS + 5.0)))
+            == "aging"
+        )
+
+    def test_missing_timestamp_is_stale(self) -> None:
+        wire = self._wire()
+        del wire["timestamp"]
+        assert freshness_key(1000.0, wire) == "stale"
+
+    def test_unparseable_timestamp_is_stale(self) -> None:
+        assert freshness_key(1000.0, self._wire(timestamp="soon")) == "stale"
+        assert freshness_key(1000.0, self._wire(timestamp=None)) == "stale"

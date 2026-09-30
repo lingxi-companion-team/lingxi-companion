@@ -20,6 +20,7 @@ __all__ = [
     "CARD_BG",
     "FONT_BOLD",
     "FONT_BODY",
+    "FONT_CAPTION",
     "FONT_FAMILY",
     "FONT_SMALL",
     "FONT_TITLE",
@@ -28,7 +29,15 @@ __all__ = [
     "HIDDEN_FG",
     "MINIMIZED_SIZE",
     "MINIMIZED_MARGIN",
+    "OFFLINE_BG",
     "PANEL_BG",
+    "RADIUS",
+    "SHAPE_GLYPHS",
+    "SPACING_LG",
+    "SPACING_MD",
+    "SPACING_SM",
+    "SPACING_XL",
+    "SPACING_XS",
     "TEXT",
     "TEXT_MUTED",
     "TRANSPARENT_KEY",
@@ -43,6 +52,19 @@ BORDER = "#e2e6ee"
 TEXT = "#1c2333"
 TEXT_MUTED = "#7a8699"
 ACCENT = "#3b6fd4"
+
+#: 断网降级时的状态栏底色（中性偏暖，提示「连接异常」但不用警示红）。
+OFFLINE_BG = "#f5f1e8"
+
+# ── 间距 / 圆角 token（Step2 新增；让 window/bubblewin 不再散落魔法数）──
+SPACING_XS = 2
+SPACING_SM = 4
+SPACING_MD = 6
+SPACING_LG = 8
+SPACING_XL = 12
+
+#: 卡片/格子的圆角半径（仅用于 Canvas 绘制；Tk Frame 本身不支持圆角，画法上用它）。
+RADIUS = 6
 
 #: 「已隐藏」格子的中性样式（设计稿 §10.1 d2：仍占格、但不显示状态色）。
 #:
@@ -69,3 +91,16 @@ FONT_TITLE = (FONT_FAMILY, 11, "bold")
 FONT_BOLD = (FONT_FAMILY, 9, "bold")
 FONT_BODY = (FONT_FAMILY, 9)
 FONT_SMALL = (FONT_FAMILY, 8)
+#: 诊断/图例等次级信息的更小字号（Step2 新增）。
+FONT_CAPTION = (FONT_FAMILY, 8)
+
+# ── 形状符号（Step2）──
+#: ``present.shape_for_key`` 返回的形状**名**到可绘制字符的映射。形状名本身是
+#: present 层的业务概念（有测试）；用哪个字符画是画法选择，放这里。字符刻意选
+#: 基本几何块（● ▲ ◆ ─），任何中文字体都带，不依赖 emoji 字体。
+SHAPE_GLYPHS = {
+    "round": "●",
+    "triangle": "▲",
+    "diamond": "◆",
+    "flat": "─",
+}
