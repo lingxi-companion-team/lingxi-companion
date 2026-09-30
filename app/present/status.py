@@ -11,9 +11,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import Any
+
 from common.perception_types import FinalState
 
-__all__ = ["FRESH_AGING_SECONDS", "offline", "freshness"]
+__all__ = ["FRESH_AGING_SECONDS", "offline", "freshness", "freshness_key"]
 
 #: 「有点旧」的阈值（秒）。小于它算 fresh，大于等于它且未 stale 算 aging。
 #: 取值参照 client 轮询周期（约 1.2s）的 2 倍留裕量；只在展示层用，不进融合。
@@ -40,4 +43,24 @@ def freshness(now_ts: float, state: FinalState | None) -> str:
     if state is None or state.stale:
         return "stale"
     age = now_ts - state.timestamp
+    return "aging" if age >= FRESH_AGING_SECONDS else "fresh"
+
+
+def freshness_key(now_ts: float, state: Mapping[str, Any] | None) -> str:
+    """线路版入口：``state`` 是 payload 里的 dict（或 ``None``），不是 ``FinalState``。
+
+    client 拿到的是 :func:`app.envelope.ParticipantState.to_dict` 序列化后的
+    ``state`` 字段；**从 dict 取值再判定**这一步也是规则，不该写进 client
+    （``app/client/`` 被覆盖率 omit）。缺字段 / 非 Mapping 一律按 ``"stale"``
+    处理 —— 没有可证明新鲜的数据，视觉上按最弱处理，不抛错（同 ``color_for_key``
+    的兜底约定）。
+    """
+    if not isinstance(state, Mapping):
+        return "stale"
+    if bool(state.get("stale")):
+        return "stale"
+    try:
+        age = now_ts - float(state["timestamp"])
+    except (KeyError, TypeError, ValueError):
+        return "stale"
     return "aging" if age >= FRESH_AGING_SECONDS else "fresh"

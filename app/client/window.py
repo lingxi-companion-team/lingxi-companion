@@ -15,6 +15,7 @@ D3：**一个窗口，两种状态**
 
 from __future__ import annotations
 
+import time
 import tkinter as tk
 from collections.abc import Callable, Mapping
 from typing import Any
@@ -28,9 +29,11 @@ from app.client.bubblewin import (
 from app.client.theme import (
     ACCENT,
     BG,
+    BORDER,
     CARD_BG,
     FONT_BODY,
     FONT_BOLD,
+    FONT_CAPTION,
     FONT_SMALL,
     FONT_TITLE,
     HEADER_BG,
@@ -38,12 +41,23 @@ from app.client.theme import (
     HIDDEN_FG,
     MINIMIZED_MARGIN,
     MINIMIZED_SIZE,
+    OFFLINE_BG,
+    SHAPE_GLYPHS,
     TEXT,
     TEXT_MUTED,
     TRANSPARENT_KEY,
 )
 from app.envelope import ROLE_STUDENT, ROLE_TEACHER
-from app.present import DIM_COLOR, LABEL_ORDER, LABEL_TEXT, color_for_key, columns_for
+from app.present import (
+    DIM_COLOR,
+    LABEL_ORDER,
+    LABEL_TEXT,
+    color_for_key,
+    columns_for,
+    freshness_key,
+    offline,
+    shape_for_key,
+)
 
 __all__ = ["CELL_HEIGHT", "CELL_WIDTH", "ClientWindow"]
 
@@ -139,9 +153,10 @@ class ClientWindow:
         tk.Label(
             header, text="灵犀学伴 · 课堂共享宫格", bg=HEADER_BG, fg=TEXT, font=FONT_TITLE
         ).pack(side="left")
-        tk.Label(
+        self._status_label = tk.Label(
             header, textvariable=self._status, bg=HEADER_BG, fg=TEXT_MUTED, font=FONT_SMALL
-        ).pack(side="left", padx=10)
+        )
+        self._status_label.pack(side="left", padx=10)
         tk.Button(header, text="最小化", command=self.toggle_minimized, width=8).pack(side="right")
         if self._role != ROLE_TEACHER:
             tk.Checkbutton(
@@ -194,10 +209,14 @@ class ClientWindow:
             payload = dict(self._provider())
         except Exception as exc:
             # 传输/服务端的任何异常都不该让窗口崩掉 —— 状态栏提示，下一轮再试。
-            self._status.set(f"离线（{type(exc).__name__}）")
+            # 文案收拢在 ``present.offline``（改文案只动一处）；底色换 OFFLINE_BG 让
+            # 「断网」在视觉上可感知，但不用警示红（R6：断联是常态不是警报）。
+            self._status.set(offline(exc))
+            self._status_label.configure(bg=OFFLINE_BG)
             return
         self._payload = payload
         self._sync_hidden_switch()
+        self._status_label.configure(bg=HEADER_BG)
         self._status.set(f"{self._viewer_id} · {self._role_label()}")
         self._render()
 
@@ -383,38 +402,98 @@ class ClientWindow:
             self._autosize_pending = False
             self.win.geometry("")
 
-    def _make_cell(self, cell: Mapping[str, Any]) -> tk.Frame:
-        """一格 = 一个参与者。三种样子：有状态 / 已隐藏 / 本帧无结果。"""
+    def _make_cell(self, cell: Mapping[str, Any]) -> tk.Widget:
+        """一格 = 一个参与者。
+
+        Step2 版式：**白卡**（CARD_BG）承载，状态色只出现在左侧 3px 竖条与形状
+        符号上 —— 整格染色在 28 人宫格里是一大片色块，扫一眼就累；把颜色压到边缘
+        后，「谁是什么状态」仍一眼可读，整体却轻很多。
+
+        - 形状符号来自 :func:`present.shape_for_key`（颜色之外的第二编码通道）；
+        - 文字色随 :func:`present.freshness_key` 三档衰减：fresh=TEXT / aging=TEXT_MUTED
+          / stale=HIDDEN_FG（维持中再叠 ● 角标）；
+        - hidden 格用斜线纹理（Canvas），与「无结果」的空卡区分开（§10.1 d2 仍占格）。
+        """
         state = cell.get("state")
         hidden = bool(cell.get("hidden"))
         participant_id = str(cell.get("participant_id", "?"))
-        stale = False
 
         if isinstance(state, Mapping) and state.get("label"):
             key = str(state["label"])
-            color = color_for_key(key)
+            state_color = color_for_key(key)
             sub_text = LABEL_TEXT.get(key, key)
             stale = bool(state.get("stale"))
-            fg = "#ffffff"
-        elif hidden:
-            # §10.1 d2：仍占格、但不显示状态色，中性文案「已隐藏」（不醒目 —— R6）。
-            color, sub_text, fg = HIDDEN_BG, "已隐藏", HIDDEN_FG
-        else:
-            # 本帧还没形成判定（融合层拒判 / 平滑层票数不足）。底色不带灰调，
-            # 与「已隐藏」区分开：一个是「没有可展示的东西」，一个是「有但不给你看」。
-            color, sub_text, fg = BG, "无结果", TEXT_MUTED
-
-        frame = tk.Frame(self._grid_frame, bg=color, width=CELL_WIDTH, height=CELL_HEIGHT)
-        frame.pack_propagate(False)
-        inner = tk.Frame(frame, bg=color)
-        inner.pack(expand=True)
-        tk.Label(inner, text=participant_id, bg=color, fg=fg, font=FONT_BOLD).pack()
-        tk.Label(inner, text=sub_text, bg=color, fg=fg, font=FONT_SMALL).pack()
-        if stale:
-            # 「维持中」用小圆点角标，不换色 —— 契约层明确要求它**不是**新状态。
-            tk.Label(frame, text="●", bg=color, fg="#ffffff", font=FONT_SMALL).place(
-                x=CELL_WIDTH - 13, y=1
+            level = freshness_key(time.time(), state)  # fresh / aging / stale
+            glyph = SHAPE_GLYPHS.get(shape_for_key(key), "─")
+            frame = tk.Frame(
+                self._grid_frame,
+                bg=CARD_BG,
+                width=CELL_WIDTH,
+                height=CELL_HEIGHT,
+                highlightbackground=BORDER,
+                highlightthickness=1,
             )
+            frame.pack_propagate(False)
+            # 左侧 3px 状态竖条（颜色主通道，压到边缘）。
+            tk.Frame(frame, bg=state_color, width=3).pack(side="left", fill="y")
+            fg = TEXT if level == "fresh" else TEXT_MUTED if level == "aging" else HIDDEN_FG
+            inner = tk.Frame(frame, bg=CARD_BG)
+            inner.pack(expand=True)
+            tk.Label(inner, text=participant_id, bg=CARD_BG, fg=fg, font=FONT_BOLD).pack()
+            tk.Label(
+                inner, text=f"{glyph} {sub_text}", bg=CARD_BG, fg=state_color, font=FONT_CAPTION
+            ).pack()
+            if stale:
+                # 「维持中」用小圆点角标，不换色 —— 契约层明确要求它**不是**新状态。
+                tk.Label(frame, text="●", bg=CARD_BG, fg=state_color, font=FONT_SMALL).place(
+                    x=CELL_WIDTH - 13, y=1
+                )
+            return frame
+
+        if hidden:
+            # §10.1 d2：仍占格、但不显示状态色；斜线纹理 = 「有，但不给你看」（R6 不醒目）。
+            canvas = tk.Canvas(
+                self._grid_frame,
+                width=CELL_WIDTH,
+                height=CELL_HEIGHT,
+                bg=HIDDEN_BG,
+                highlightthickness=1,
+                highlightbackground=BORDER,
+                bd=0,
+            )
+            for x in range(-CELL_HEIGHT, CELL_WIDTH, 8):
+                canvas.create_line(x, CELL_HEIGHT, x + CELL_HEIGHT, 0, fill="#dde3ec", width=1)
+            canvas.create_text(
+                CELL_WIDTH // 2,
+                CELL_HEIGHT // 2 - 7,
+                text=participant_id,
+                fill=HIDDEN_FG,
+                font=FONT_BOLD,
+            )
+            canvas.create_text(
+                CELL_WIDTH // 2,
+                CELL_HEIGHT // 2 + 11,
+                text="已隐藏",
+                fill=HIDDEN_FG,
+                font=FONT_CAPTION,
+            )
+            return canvas
+
+        # 本帧还没形成判定（融合层拒判 / 平滑层票数不足）。空卡 + 中性文案，
+        # 与 hidden 的斜线纹理区分开：一个是「没有可展示的东西」，一个是「有但不给你看」。
+        frame = tk.Frame(
+            self._grid_frame,
+            bg=CARD_BG,
+            width=CELL_WIDTH,
+            height=CELL_HEIGHT,
+            highlightbackground=BORDER,
+            highlightthickness=1,
+        )
+        frame.pack_propagate(False)
+        inner = tk.Frame(frame, bg=CARD_BG)
+        inner.pack(expand=True)
+        tk.Label(inner, text=participant_id, bg=CARD_BG, fg=TEXT_MUTED, font=FONT_BOLD).pack()
+        tk.Label(inner, text="无结果", bg=CARD_BG, fg=TEXT_MUTED, font=FONT_CAPTION).pack()
         return frame
 
     def _render_summary(self) -> None:
@@ -453,6 +532,8 @@ class ClientWindow:
             ).pack(side="left")
             bar = tk.Canvas(row, width=BAR_MAX_WIDTH, height=10, bg=BG, highlightthickness=0, bd=0)
             bar.pack(side="left", padx=6)
+            # 1px 描边让占比条在白卡上有边界（Step2：纯画法，不改数值口径）。
+            bar.create_rectangle(0, 0, BAR_MAX_WIDTH, 10, outline=BORDER, width=1)
             bar.create_rectangle(
                 0, 0, max(1, int(BAR_MAX_WIDTH * share)), 10, fill=color, outline=""
             )
