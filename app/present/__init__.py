@@ -19,6 +19,14 @@ from app.present.colors import (
 )
 from app.present.diff import changed_participants
 from app.present.grid import MAX_GRID_COLUMNS, columns_for, grid_cells, sort_key
+from app.present.scale import (
+    SCALE_COMPACT,
+    SCALE_ROOMY,
+    SCALE_STANDARD,
+    WIDTH_COMPACT,
+    WIDTH_ROOMY,
+    scale_for_width,
+)
 from app.present.shape import STATE_SHAPES, shape_for, shape_for_key
 from app.present.status import FRESH_AGING_SECONDS, freshness, freshness_key, offline
 from app.present.summary import DISPLAY_LABELS, LABEL_ORDER, LABEL_TEXT, Summary, summarize
@@ -31,9 +39,14 @@ __all__ = [
     "LABEL_ORDER",
     "LABEL_TEXT",
     "MAX_GRID_COLUMNS",
+    "SCALE_COMPACT",
+    "SCALE_ROOMY",
+    "SCALE_STANDARD",
     "STATE_COLORS",
     "STATE_SHAPES",
     "Summary",
+    "WIDTH_COMPACT",
+    "WIDTH_ROOMY",
     "changed_participants",
     "color_for",
     "color_for_count",
@@ -44,6 +57,7 @@ __all__ = [
     "grid_cells",
     "is_dim",
     "offline",
+    "scale_for_width",
     "shape_for",
     "shape_for_key",
     "sort_key",

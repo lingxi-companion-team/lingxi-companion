@@ -52,10 +52,12 @@ from app.present import (
     DIM_COLOR,
     LABEL_ORDER,
     LABEL_TEXT,
+    changed_participants,
     color_for_key,
     columns_for,
     freshness_key,
     offline,
+    scale_for_width,
     shape_for_key,
 )
 
@@ -121,6 +123,11 @@ class ClientWindow:
         self._icon_pos: tuple[int, int] | None = None
         self._expanded_geometry: str | None = None
         self._autosize_pending = True
+        # Step3：变化高亮（变化的格加粗竖条 200ms 后恢复）与断网降级（全格降饱和）。
+        # 两者都只影响画法，判定（谁变了/断没断）分别在 present.diff 与 refresh 的
+        # 异常分支里 —— 这里只存「当前要画成什么样」的结果。
+        self._changed_ids: set[str] = set()
+        self._offline = False
 
         self.win = tk.Toplevel(master)
         self.win.title("灵犀学伴 · 课堂共享宫格")
@@ -138,6 +145,10 @@ class ClientWindow:
         # 用 ``bind_all``：右键要能在**任何**子控件上生效（Tk 的事件不冒泡到 Toplevel），
         # 而本应用只有一个窗口，全局绑定不会误伤别的界面。
         self.win.bind_all("<Button-3>", self._popup_menu)
+        # Step3 窗口缩放：只在「跨档」时重画（scale 值变了才 render），拖动窗口
+        # 边缘时逐像素变化不会触发连续重排 —— 分档缩放的好处就在这。
+        self._last_scale = 1.0
+        self.win.bind("<Configure>", self._on_resize)
 
         self._expanded_frame.pack(fill="both", expand=True)
         self.refresh()
@@ -204,21 +215,52 @@ class ClientWindow:
     # ── 取数与轮询 ────────────────────────────────────────────────────────
 
     def refresh(self) -> None:
-        """取一次快照并重绘。传输失败只改状态栏，不抛出去 —— 界面要能一直活着。"""
+        """取一次快照并重绘。传输失败只改状态栏 + 全格降饱和，不抛出去 —— 界面要能一直活着。"""
         try:
             payload = dict(self._provider())
         except Exception as exc:
             # 传输/服务端的任何异常都不该让窗口崩掉 —— 状态栏提示，下一轮再试。
             # 文案收拢在 ``present.offline``（改文案只动一处）；底色换 OFFLINE_BG 让
             # 「断网」在视觉上可感知，但不用警示红（R6：断联是常态不是警报）。
+            # 宫格整体降饱和（_offline=True）：数据不再新鲜，视觉「褪」掉一档。
+            self._offline = True
             self._status.set(offline(exc))
             self._status_label.configure(bg=OFFLINE_BG)
+            self._render()
             return
+        # 更新 payload **之前**算变化格（旧 grid 与新 grid 的签名差）——判定在
+        # present.diff（已测），这里只存结果集合供 _make_cell 加粗竖条。
+        old_grid = self._payload.get("grid", [])
+        new_grid = payload.get("grid", [])
+        self._changed_ids = changed_participants(old_grid, new_grid)
         self._payload = payload
+        self._offline = False
         self._sync_hidden_switch()
         self._status_label.configure(bg=HEADER_BG)
         self._status.set(f"{self._viewer_id} · {self._role_label()}")
         self._render()
+        if self._changed_ids:
+            # 高亮只亮一拍（200ms 后清空重画），别让它常亮 —— 那是「有过变化」，
+            # 不是「正在变化」。200ms 与轮询周期解耦：poll_ms 再长，高亮也只闪一下。
+            self.win.after(200, self._clear_highlight)
+
+    def _clear_highlight(self) -> None:
+        self._changed_ids = set()
+        self._render()
+
+    def _on_resize(self, event: tk.Event) -> None:
+        """窗口尺寸变化时，跨档才重画。
+
+        ``<Configure>`` 在拖动窗口边缘时**每个像素**都触发，但分档缩放意味着
+        绝大多数事件里 ``scale_for_width`` 的返回值不变 —— 只有跨档那一下值得
+        重排。这也避开了最小化/还原瞬间 winfo_width 的抖动。
+        """
+        if self._minimized:
+            return
+        scale = scale_for_width(event.width)
+        if scale != self._last_scale:
+            self._last_scale = scale
+            self._render_expanded()
 
     def _schedule_poll(self) -> None:
         self._after_id = self.win.after(self._poll_ms, self._poll)
@@ -389,8 +431,15 @@ class ClientWindow:
             child.destroy()
         cells = list(self._payload.get("grid") or [])
         columns = columns_for(len(cells))
+        # Step3 窗口缩放：倍率判定在 present.scale（阈值是产品决策，已测），
+        # 这里只做「乘」这一件画法的事。winfo_width 在窗口未映射时返回 1，
+        # 那时按标准档（首次渲染），映射后 _on_resize 会带真实宽度重画。
+        width = self.win.winfo_width()
+        scale = scale_for_width(width) if width > 1 else 1.0
         for index, cell in enumerate(cells):
-            self._make_cell(cell).grid(row=index // columns, column=index % columns, padx=3, pady=3)
+            self._make_cell(cell, scale).grid(
+                row=index // columns, column=index % columns, padx=3, pady=3
+            )
 
         if self._role == ROLE_TEACHER:
             self._render_summary()
@@ -402,7 +451,7 @@ class ClientWindow:
             self._autosize_pending = False
             self.win.geometry("")
 
-    def _make_cell(self, cell: Mapping[str, Any]) -> tk.Widget:
+    def _make_cell(self, cell: Mapping[str, Any], scale: float = 1.0) -> tk.Widget:
         """一格 = 一个参与者。
 
         Step2 版式：**白卡**（CARD_BG）承载，状态色只出现在左侧 3px 竖条与形状
@@ -412,11 +461,20 @@ class ClientWindow:
         - 形状符号来自 :func:`present.shape_for_key`（颜色之外的第二编码通道）；
         - 文字色随 :func:`present.freshness_key` 三档衰减：fresh=TEXT / aging=TEXT_MUTED
           / stale=HIDDEN_FG（维持中再叠 ● 角标）；
-        - hidden 格用斜线纹理（Canvas），与「无结果」的空卡区分开（§10.1 d2 仍占格）。
+        - hidden 格用斜线纹理（Canvas），与「无结果」的空卡区分开（§10.1 d2 仍占格）；
+        - Step3 变化高亮：本格在 ``_changed_ids`` 里时竖条 3px→5px，亮一拍后恢复
+          （判定在 present.diff，这里只读结果集合）；
+        - Step3 断网降级：``_offline`` 时竖条与状态文字全降饱和（DIM/TEXT_MUTED）——
+          数据不再新鲜，视觉「褪」掉一档，但格还在（R6：断联是常态）；
+        - Step3 窗口缩放：``scale`` 由 :func:`present.scale_for_width` 分档给出，
+          这里只乘尺寸。字号刻意**不**跟着缩——8pt 再缩就看不清了，格子的「呼吸感」
+          靠留白变化，不靠字变小。
         """
         state = cell.get("state")
         hidden = bool(cell.get("hidden"))
         participant_id = str(cell.get("participant_id", "?"))
+        cell_w = max(48, int(CELL_WIDTH * scale))
+        cell_h = max(40, int(CELL_HEIGHT * scale))
 
         if isinstance(state, Mapping) and state.get("label"):
             key = str(state["label"])
@@ -425,28 +483,36 @@ class ClientWindow:
             stale = bool(state.get("stale"))
             level = freshness_key(time.time(), state)  # fresh / aging / stale
             glyph = SHAPE_GLYPHS.get(shape_for_key(key), "─")
+            # 断网降级：颜色主通道整体褪掉，只留「有这么一格」的轮廓。
+            bar_color = DIM_COLOR if self._offline else state_color
+            text_color = TEXT_MUTED if self._offline else state_color
+            # 变化高亮：竖条加粗一拍。离线时不高亮 —— 褪色的格不该再闪。
+            bar_width = 5 if (participant_id in self._changed_ids and not self._offline) else 3
             frame = tk.Frame(
                 self._grid_frame,
                 bg=CARD_BG,
-                width=CELL_WIDTH,
-                height=CELL_HEIGHT,
+                width=cell_w,
+                height=cell_h,
                 highlightbackground=BORDER,
                 highlightthickness=1,
             )
             frame.pack_propagate(False)
-            # 左侧 3px 状态竖条（颜色主通道，压到边缘）。
-            tk.Frame(frame, bg=state_color, width=3).pack(side="left", fill="y")
-            fg = TEXT if level == "fresh" else TEXT_MUTED if level == "aging" else HIDDEN_FG
+            # 左侧状态竖条（颜色主通道，压到边缘；变化时加粗一拍）。
+            tk.Frame(frame, bg=bar_color, width=bar_width).pack(side="left", fill="y")
+            if self._offline:
+                fg = TEXT_MUTED
+            else:
+                fg = TEXT if level == "fresh" else TEXT_MUTED if level == "aging" else HIDDEN_FG
             inner = tk.Frame(frame, bg=CARD_BG)
             inner.pack(expand=True)
             tk.Label(inner, text=participant_id, bg=CARD_BG, fg=fg, font=FONT_BOLD).pack()
             tk.Label(
-                inner, text=f"{glyph} {sub_text}", bg=CARD_BG, fg=state_color, font=FONT_CAPTION
+                inner, text=f"{glyph} {sub_text}", bg=CARD_BG, fg=text_color, font=FONT_CAPTION
             ).pack()
             if stale:
                 # 「维持中」用小圆点角标，不换色 —— 契约层明确要求它**不是**新状态。
-                tk.Label(frame, text="●", bg=CARD_BG, fg=state_color, font=FONT_SMALL).place(
-                    x=CELL_WIDTH - 13, y=1
+                tk.Label(frame, text="●", bg=CARD_BG, fg=text_color, font=FONT_SMALL).place(
+                    x=cell_w - 13, y=1
                 )
             return frame
 
@@ -454,25 +520,25 @@ class ClientWindow:
             # §10.1 d2：仍占格、但不显示状态色；斜线纹理 = 「有，但不给你看」（R6 不醒目）。
             canvas = tk.Canvas(
                 self._grid_frame,
-                width=CELL_WIDTH,
-                height=CELL_HEIGHT,
+                width=cell_w,
+                height=cell_h,
                 bg=HIDDEN_BG,
                 highlightthickness=1,
                 highlightbackground=BORDER,
                 bd=0,
             )
-            for x in range(-CELL_HEIGHT, CELL_WIDTH, 8):
-                canvas.create_line(x, CELL_HEIGHT, x + CELL_HEIGHT, 0, fill="#dde3ec", width=1)
+            for x in range(-cell_h, cell_w, 8):
+                canvas.create_line(x, cell_h, x + cell_h, 0, fill="#dde3ec", width=1)
             canvas.create_text(
-                CELL_WIDTH // 2,
-                CELL_HEIGHT // 2 - 7,
+                cell_w // 2,
+                cell_h // 2 - 7,
                 text=participant_id,
                 fill=HIDDEN_FG,
                 font=FONT_BOLD,
             )
             canvas.create_text(
-                CELL_WIDTH // 2,
-                CELL_HEIGHT // 2 + 11,
+                cell_w // 2,
+                cell_h // 2 + 11,
                 text="已隐藏",
                 fill=HIDDEN_FG,
                 font=FONT_CAPTION,
@@ -484,8 +550,8 @@ class ClientWindow:
         frame = tk.Frame(
             self._grid_frame,
             bg=CARD_BG,
-            width=CELL_WIDTH,
-            height=CELL_HEIGHT,
+            width=cell_w,
+            height=cell_h,
             highlightbackground=BORDER,
             highlightthickness=1,
         )
