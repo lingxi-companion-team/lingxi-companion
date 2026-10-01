@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from app.envelope import ROLE_TEACHER, ParticipantState
 from app.present.summary import DISPLAY_LABELS, LABEL_ORDER, LABEL_TEXT, summarize
 from common.perception_types import EMOTION_LABELS, EmotionLabel, FinalState
@@ -16,6 +18,11 @@ from common.perception_types import EMOTION_LABELS, EmotionLabel, FinalState
 def _student(pid: str, label: EmotionLabel, *, hidden: bool = False) -> ParticipantState:
     state = FinalState(label=label, timestamp=1.0, confidence=0.7)
     return ParticipantState(pid, state=state, hidden=hidden)
+
+
+def _closed(pid: str) -> ParticipantState:
+    """已关闭感知者：主动停止采集，因此没有状态。"""
+    return ParticipantState(pid, closed=True)
 
 
 def test_display_labels_are_the_three_emotions_plus_unknown() -> None:
@@ -62,10 +69,66 @@ def test_counts_and_ratio() -> None:
 
 
 def test_counts_sum_to_online_count() -> None:
-    """A8 的分量自洽性：各分量之和 == 在线人数。"""
+    """A8 的分量自洽性：各情感分量之和 + 已关闭 == 在线人数。
+
+    v7 起在线人数含「已关闭感知」者，所以不变式要带上 ``closed_count`` ——
+    这也是为什么本条刻意放一个已关闭者进来：只测「无关闭」的旧情形，
+    这条不变式就退化成恒等式，挡不住任何回归。
+    """
     people = [_student(f"s{i:02d}", EmotionLabel.CONFUSED) for i in range(1, 5)]
+    people.append(_closed("s05"))
     summary = summarize(people)
-    assert sum(summary.by_label.values()) == summary.online_count
+    assert sum(summary.by_label.values()) + summary.closed_count == summary.online_count
+
+
+def test_closed_counts_into_online_but_not_into_by_label() -> None:
+    """已关闭感知者人在课堂 → 计入在线；但没有情感状态 → 不进任何情感分量。"""
+    people = [
+        _student("s01", EmotionLabel.FOCUSED),
+        _closed("s02"),
+        _closed("s03"),
+    ]
+    summary = summarize(people)
+    assert summary.online_count == 3
+    assert summary.closed_count == 2
+    assert summary.by_label["focused"] == 1
+    assert sum(summary.by_label.values()) == 1
+
+
+def test_closed_ratio_uses_the_online_denominator() -> None:
+    """四个情感分量的比例之和 == 1 - closed_ratio（「有 10% 关了，专注最多 90%」）。"""
+    people = [
+        _student("s01", EmotionLabel.FOCUSED),
+        _closed("s02"),
+    ]
+    summary = summarize(people)
+    assert summary.closed_ratio == 0.5
+    assert summary.ratio["focused"] == 0.5
+    assert sum(summary.ratio.values()) + summary.closed_ratio == pytest.approx(1.0)
+
+
+def test_closed_ratio_is_zero_when_nobody_is_online() -> None:
+    assert summarize([]).closed_ratio == 0.0
+
+
+def test_closed_members_are_listed_in_no_state() -> None:
+    """已关闭者不该出现在任何情感名单里（否则气泡展开会张冠李戴）。"""
+    summary = summarize([_student("s01", EmotionLabel.FOCUSED), _closed("s02")])
+    assert all("s02" not in ids for ids in summary.members_by_label.values())
+
+
+def test_hidden_and_closed_together_count_once() -> None:
+    """同时隐藏且关闭时只计一次 —— 关闭是更强的事实，不能把人数算重。"""
+    both = ParticipantState("s01", hidden=True, closed=True)
+    summary = summarize([both])
+    assert summary.online_count == 1
+    assert summary.closed_count == 1
+
+
+def test_to_dict_includes_closed_fields() -> None:
+    payload = summarize([_closed("s01")]).to_dict()
+    assert payload["closed_count"] == 1
+    assert payload["closed_ratio"] == 1.0
 
 
 def test_members_by_label_lists_ids_per_state() -> None:

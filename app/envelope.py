@@ -11,18 +11,34 @@
 ------------------------------------------
 ::
 
-    {"participant_id": "s01", "role": "student", "hidden": false, "ts": 1.5,
+    {"participant_id": "s01", "role": "student", "hidden": false,
+     "closed": false, "ts": 1.5,
      "state": {"label": "focused", "confidence": 0.87, "stale": false,
                "timestamp": 1.5, "frame_id": 3}}
 
-``state`` 为 ``None`` 有**两种**含义，客户端靠 ``hidden`` 区分：
+``state`` 为 ``None`` 有**三种**含义，客户端靠 ``hidden`` / ``closed`` 区分：
 
-- ``state is None`` 且 ``hidden is False`` —— 该参与者本帧还没有结果（或它就是教师）；
+- ``state is None`` 且两个标志都假 —— 该参与者本帧还没有结果（或它就是教师）；
 - ``state is None`` 且 ``hidden is True`` —— **状态被按观看者掩去了**（见
-  :mod:`app.present.visibility`）。
+  :mod:`app.present.visibility`）；
+- ``state is None`` 且 ``closed is True`` —— 该参与者**主动关闭了感知采集**，
+  压根没有产生过状态。
 
-后一种**仍要占一个宫格**（设计稿 §10.1 d2），所以网格过滤的判据是
-:attr:`ParticipantState.occupies_cell`（有状态 **或** 被隐藏），而不是单看 ``has_state``。
+三种情形**都仍要占一个宫格**（设计稿 §10.1 d2 与 v7 仪表盘设计稿的「已关闭感知」格），
+所以网格过滤的判据是 :attr:`ParticipantState.occupies_cell`，而不是单看 ``has_state``。
+
+``hidden`` 与 ``closed`` 的区别（**不要混用**）
+----------------------------------------------
+============  ============================  ======================
+              ``hidden``                    ``closed``
+============  ============================  ======================
+采集          **仍在采集**                   停止采集
+可见性        对同学掩去状态，教师仍可见       本来就没有状态可看
+占格          占                          占
+文案          「已隐藏」                    「已关闭感知」
+============  ============================  ======================
+
+两者可以同时为真（关闭后仍保持隐藏开关），此时按「已关闭感知」呈现 —— 关闭是更强的事实。
 """
 
 from __future__ import annotations
@@ -91,8 +107,20 @@ class ParticipantState:
         participant_id: 会话内唯一标识（用编号/昵称，**不要用真实姓名**）。
         role: :data:`ROLE_STUDENT` 或 :data:`ROLE_TEACHER`。
         state: 该参与者的稳定感知结果；教师恒为 ``None``。
-        hidden: 是否对同学隐藏自己的状态（教师端不受影响）。
+        hidden: 是否对同学隐藏自己的状态（教师端不受影响）。**仍在采集**。
         ts: 该条状态的时间戳，用于判断新鲜度。
+        closed: 是否**主动关闭了感知采集**。与 ``hidden`` 语义不同（见模块
+            docstring 的对照表）：``hidden`` 是「采了但不给同学看」，``closed``
+            是「压根没采」。关闭者 ``state`` 恒为 ``None``。
+
+    ``closed`` 为什么是独立字段而不是复用 ``hidden`` 或 ``UNKNOWN``
+    ------------------------------------------------------------
+    - 复用 ``hidden``：会推翻 R5 那条「仅对同学隐藏（教师仍可见）」的硬文案 ——
+      关闭采集与对同学隐藏是**两件不同的事**，教师看得到「已隐藏」的状态，
+      但看不到「已关闭」的任何状态（因为没有）；
+    - 复用 ``EmotionLabel.UNKNOWN``：``UNKNOWN`` 是「本帧未形成判定」（系统没测出来），
+      而 ``closed`` 是「用户主动关掉」（系统被要求不测）—— 归因完全相反，
+      挤进同一个标签会让教师误判。
     """
 
     participant_id: str
@@ -100,6 +128,7 @@ class ParticipantState:
     state: FinalState | None = None
     hidden: bool = False
     ts: float = 0.0
+    closed: bool = False
 
     def __post_init__(self) -> None:
         if not self.participant_id:
@@ -122,10 +151,11 @@ class ParticipantState:
     def occupies_cell(self) -> bool:
         """是否在宫格中占一格。
 
-        判据是「有状态 **或** 被隐藏」：被隐藏者的状态虽不可见，仍要占格并显示为
-        「已隐藏」，否则宫格布局会随同学反复开关而重排（设计稿 §10.1 d2）。
+        判据是「有状态 **或** 被隐藏 **或** 已关闭感知」：后两者的状态虽不可见，
+        仍要占格并显示为「已隐藏」/「已关闭感知」，否则宫格布局会随同学反复开关
+        而重排（设计稿 §10.1 d2）。
         """
-        return self.has_state or self.hidden
+        return self.has_state or self.hidden or self.closed
 
     def masked(self) -> ParticipantState:
         """抹掉状态、保留占格 —— 供「对同学隐藏」时生成他人视角。"""
@@ -135,12 +165,22 @@ class ParticipantState:
         """改写可见性开关（其余字段不变）。"""
         return replace(self, hidden=hidden)
 
+    def with_closed(self, closed: bool) -> ParticipantState:
+        """改写「已关闭感知」开关（其余字段不变）。
+
+        关闭采集时调用方应同时把 ``state`` 置空 —— 但本方法**不代劳**：
+        它只改标志，让「标志与状态」的一致性由调用方显式表达，避免这里藏一条
+        隐式副作用。真正停止采集的编排在会话侧（``app.integration``）。
+        """
+        return replace(self, closed=closed)
+
     def to_dict(self) -> dict[str, Any]:
         """转为线路格式（JSON 可直接序列化）。"""
         return {
             "participant_id": self.participant_id,
             "role": self.role,
             "hidden": self.hidden,
+            "closed": self.closed,
             "ts": self.ts,
             "state": None if self.state is None else _state_to_dict(self.state),
         }
@@ -158,4 +198,5 @@ class ParticipantState:
             state=None if raw_state is None else _state_from_dict(raw_state),
             hidden=bool(payload.get("hidden", False)),
             ts=float(payload.get("ts", 0.0)),
+            closed=bool(payload.get("closed", False)),
         )

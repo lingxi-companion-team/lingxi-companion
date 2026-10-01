@@ -85,6 +85,57 @@ def test_with_hidden_only_changes_the_flag() -> None:
     assert original.hidden is False, "原对象不可变"
 
 
+# ── closed：主动关闭感知采集（v7 仪表盘的「已关闭感知」）──────────────────
+
+
+def test_closed_defaults_to_false() -> None:
+    assert ParticipantState("s01").closed is False
+
+
+def test_closed_student_still_occupies_a_cell() -> None:
+    """已关闭感知者仍占格 —— v7 要显示「已关闭感知」格，整格消失会让宫格重排。"""
+    assert ParticipantState("s02", closed=True).occupies_cell is True
+
+
+def test_closed_is_independent_of_hidden() -> None:
+    """两个标志互不蕴含：可以只隐藏、只关闭，或两者都真。"""
+    only_hidden = ParticipantState("s03", hidden=True)
+    only_closed = ParticipantState("s04", closed=True)
+    assert only_hidden.closed is False
+    assert only_closed.hidden is False
+
+
+def test_with_closed_only_changes_the_flag() -> None:
+    """``with_closed`` 不代劳清空 ``state`` —— 那条一致性由调用方显式表达。"""
+    original = ParticipantState("s05", state=_state())
+    toggled = original.with_closed(True)
+    assert toggled.closed is True
+    assert toggled.state is original.state
+    assert original.closed is False, "原对象不可变"
+
+
+def test_masked_keeps_closed() -> None:
+    masked = ParticipantState("s06", closed=True).masked()
+    assert masked.closed is True
+    assert masked.occupies_cell is True
+
+
+def test_to_dict_includes_closed() -> None:
+    assert ParticipantState("s07").to_dict()["closed"] is False
+    assert ParticipantState("s07", closed=True).to_dict()["closed"] is True
+
+
+def test_round_trip_preserves_closed() -> None:
+    original = ParticipantState("s08", closed=True, ts=2.0)
+    assert ParticipantState.from_dict(original.to_dict()) == original
+
+
+def test_from_dict_defaults_closed_to_false() -> None:
+    """老 payload（没有 closed 键）必须仍能解析 —— 向后兼容。"""
+    restored = ParticipantState.from_dict({"participant_id": "s09", "role": ROLE_STUDENT})
+    assert restored.closed is False
+
+
 def test_to_dict_shape() -> None:
     participant = ParticipantState("s05", state=_state(EmotionLabel.CONFUSED, 0.42), ts=1.5)
     payload = participant.to_dict()
