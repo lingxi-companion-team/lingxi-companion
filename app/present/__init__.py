@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from app.present.bubble import student_components, teacher_components
 from app.present.colors import (
+    CLOSED_COLOR,
     DIM_COLOR,
     STATE_COLORS,
     color_for,
@@ -38,6 +39,7 @@ from app.present.summary import DISPLAY_LABELS, LABEL_ORDER, LABEL_TEXT, Summary
 from app.present.visibility import visible_to
 
 __all__ = [
+    "CLOSED_COLOR",
     "DIM_COLOR",
     "DISPLAY_LABELS",
     "FRESH_AGING_SECONDS",

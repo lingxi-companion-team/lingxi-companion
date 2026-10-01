@@ -10,6 +10,12 @@
 所以这里复算 WCAG 2.1 相对亮度与对比度，对**每一个承载信息的色值 × 每一个它可能
 落上去的底色**组合断言门槛。改色改到不达标，这里立刻红。
 
+这条守卫在 2026-10-01 的 v7 三栏仪表盘里**真的拦下了东西**：设计稿（Finserv 蓝白风）
+的六个关键令牌里有五个不达标 —— 状态色 ``#4361EE``/``#7C5CE0``/``#64748B`` 作为文字色
+压画布分别只有 4.34/4.07/4.12，外壳 ``#F0F6FF`` 会让表面层次掉到 1.086。
+最终**表面三档保持原值、状态色压暗 2~9%、品牌色换 Finserv 主色**，
+详见 ``不推送/技术方案/v7-实施决策记录-2026-10-01.md``。
+
 门槛取值的依据
 --------------
 - 正文/状态名文字：**4.5:1**（WCAG 1.4.3 AA 正文级）。
@@ -29,7 +35,7 @@ import re
 import pytest
 
 from app.client import theme
-from app.present.colors import DIM_COLOR, STATE_COLORS
+from app.present.colors import CLOSED_COLOR, DIM_COLOR, STATE_COLORS
 from common.perception_types import EmotionLabel
 
 __all__ = []
@@ -128,6 +134,25 @@ def test_dim_color_is_a_visible_graphic_but_lighter_than_unknown() -> None:
     assert _luminance(DIM_COLOR) > _luminance(STATE_COLORS[EmotionLabel.UNKNOWN])
     # 「无人」与「未形成判定」得看得出是两种灰
     assert contrast(DIM_COLOR, STATE_COLORS[EmotionLabel.UNKNOWN]) >= 1.3
+
+
+def test_closed_color_is_readable_text_and_darker_than_unknown() -> None:
+    """``CLOSED_COLOR``（第 5 态「已关闭感知」）承载**文字**，按 4.5 验三个底色。
+
+    它与两个灰的分工不同，这里一并钉住，避免三者被随手改成同一个值：
+
+    - ``UNKNOWN`` ``#5b6a7f``：系统本帧未形成判定 —— **情感标签**，在 ``STATE_COLORS`` 里；
+    - ``CLOSED_COLOR`` ``#55606e``：用户主动关掉采集 —— **不是情感**，故单列常量；
+    - ``DIM_COLOR`` ``#7d8b9a``：「该状态当前无人」的**图形**置灰（按 3:1 验）。
+
+    关闭是「确定的、非情感的状态」，所以它比 ``UNKNOWN`` 更深更实，而不是更淡。
+    """
+    for background, name in ((CARD, "卡片白"), (CANVAS, "画布蓝"), (PANEL, "面板蓝")):
+        ratio = contrast(CLOSED_COLOR, background)
+        assert ratio >= TEXT_MIN, f"closed {CLOSED_COLOR} 压{name} 只有 {ratio:.2f}:1"
+    # 比「未形成判定」更深 —— 语义不同，取值也该分得开
+    assert _luminance(CLOSED_COLOR) < _luminance(STATE_COLORS[EmotionLabel.UNKNOWN])
+    assert contrast(CLOSED_COLOR, STATE_COLORS[EmotionLabel.UNKNOWN]) >= 1.15
 
 
 # ── 文字令牌：按各自的实际用途断言 ────────────────────────────────────────
