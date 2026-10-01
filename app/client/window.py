@@ -47,6 +47,7 @@ from app.client.bubblewin import (
     build_context_menu,
     try_enable_transparency,
 )
+from app.client.dashboard import DashboardView
 from app.client.theme import (
     BG,
     BRAND,
@@ -186,7 +187,11 @@ class ClientWindow:
         self._last_refresh_ms: float | None = None
 
         self.win = tk.Toplevel(master)
-        self.win.title("灵犀学伴 · 课堂共享宫格")
+        # 标题随角色变：教师端是「状态监管仪表盘」，学生端是「共享宫格」——
+        # 两者现在是不同的视图，用同一个标题会让人以为看到的还是同一块界面。
+        self.win.title(
+            "灵犀学伴 · 课堂状态看板" if role == ROLE_TEACHER else "灵犀学伴 · 课堂共享宫格"
+        )
         self.win.configure(bg=BG)
         self.win.protocol("WM_DELETE_WINDOW", self.quit_app)
 
@@ -286,7 +291,11 @@ class ClientWindow:
         title_group.pack(side="left")
         tk.Label(
             title_group,
-            text="灵犀学伴 · 课堂共享宫格",
+            text=(
+                "灵犀学伴 · 课堂状态看板"
+                if self._role == ROLE_TEACHER
+                else "灵犀学伴 · 课堂共享宫格"
+            ),
             bg=HEADER_BG,
             fg=INK_HI,
             font=FONT_TITLE_LG,
@@ -296,19 +305,36 @@ class ClientWindow:
         )
         self._status_label.pack(side="left", padx=(SPACING_MD, 0))
 
-        # ── 主体：宫格 + 汇总面板 ──
+        # ── 主体：教师端 = 三栏仪表盘；学生端 = 共享宫格 + 图例 ──
+        #
+        # v7（2026-10-01）：教师视角从「宫格 + 汇总面板」升级为**三栏仪表盘**
+        # （左导航 / 中 KPI+图表+表格 / 右筛选面板），决策 ①②③④⑥ 的落点。
+        # 学生视角保持不变 —— 它本来就是「共享宫格」这个语义，不需要监管面板；
+        # 而且服务端对学生**根本不下发** ``summary``（A2），建了也没数据。
+        body = tk.Frame(self._expanded_frame, bg=BG, padx=SPACING_XL, pady=SPACING_XL)
+        body.pack(fill="both", expand=True)
+
+        self._dashboard: DashboardView | None = None
+        # 这两个控件只在**学生端**建（教师端走 ``_dashboard`` 分支）。这里用纯注解
+        # 声明类型、不预先造空控件 —— 教师端若误用会立刻 AttributeError，
+        # 比「悄悄操作一个没 pack 的空 Frame」更容易发现。
+        self._grid_frame: tk.Frame
+        self._legend_frame: tk.Frame
+        self._panel_canvas: tk.Canvas | None = None
+
+        if self._role == ROLE_TEACHER:
+            self._dashboard = DashboardView(body, viewer_id=self._viewer_id)
+            self._dashboard.pack(fill="both", expand=True)
+            return
+
         # 宫格与图例同处一列并上下相邻：图例是宫格的读图说明，必须**紧跟宫格**。
         # 早先把图例直接 pack 到 ``_expanded_frame`` 底部（fill="x" + expand 的兄弟），
         # 窗口一高就把图例甩到窗口最下沿、中间留出一大片空白，读起来图例像是在讲
         # 别的东西。现在把这一列交给 ``stack``，图例随宫格自然下沉。
-        body = tk.Frame(self._expanded_frame, bg=BG, padx=SPACING_XL, pady=SPACING_XL)
-        body.pack(fill="both", expand=True)
         stack = tk.Frame(body, bg=BG)
         stack.pack(side="left", anchor="n")
         self._grid_frame = tk.Frame(stack, bg=BG)
         self._grid_frame.pack(anchor="nw")
-        # 面板本身带圆角，所以用 Canvas 承载；内容由 ``_render_summary`` 画上去。
-        self._panel_canvas: tk.Canvas | None = None
 
         # ── 底栏图例（紧跟宫格，不撑满宽度）──
         legend = tk.Frame(stack, bg=BG, height=LEGEND_HEIGHT)
@@ -330,6 +356,10 @@ class ClientWindow:
         再整条丢掉「无结果 / 已隐藏」，最后只剩四个状态胶囊。四个状态胶囊本身
         是必读项，任何宽度下都保留。
         """
+        if self._dashboard is not None:
+            # 教师端没有宫格，也就没有图例 —— 空操作而不是不定义：
+            # ``_on_resize`` 与测试都按「可以无参调用」使用它。
+            return
         for child in self._legend_frame.winfo_children():
             child.destroy()
         canvas = tk.Canvas(
@@ -643,6 +673,9 @@ class ClientWindow:
         return bool(components[0].get("stale", False)) if components else False
 
     def _render_expanded(self) -> None:
+        if self._dashboard is not None:
+            self._render_dashboard()
+            return
         for child in self._grid_frame.winfo_children():
             child.destroy()
         cells = list(self._payload.get("grid") or [])
@@ -696,6 +729,32 @@ class ClientWindow:
             # 自动量出来的是「所有控件自然尺寸之和」，在 28 人 + 面板时会宽到
             # 超出屏幕，反而不如按最小下界给。
             self.win.geometry(f"{content_width}x{self._content_height(cells, columns, geo)}")
+
+    #: 教师端仪表盘的初始尺寸。取 1440×860：设计稿按 1440 宽画，
+    #: 且 1440 落在 ``present.layout`` 的「三栏全开」档（≥1280）。
+    _DASHBOARD_DEFAULT = (1440, 860)
+
+    def _render_dashboard(self) -> None:
+        """教师端：把 payload 交给三栏仪表盘。
+
+        尺寸分档（1280/1120/960/800）由 ``present.layout`` 在 ``DashboardView``
+        内部按自身宽度算，这里只管「给多少宽高」。首次显示时显式给一个默认尺寸 ——
+        与宫格路径同理：窗口未映射时 ``winfo_width()`` 返回 1，不能拿它当依据。
+        """
+        measured_w = self.win.winfo_width()
+        measured_h = self.win.winfo_height()
+        if self._autosize_pending:
+            self._autosize_pending = False
+            default_w, default_h = self._DASHBOARD_DEFAULT
+            screen_h = self.win.winfo_screenheight()
+            width = measured_w if measured_w > 1 else default_w
+            height = measured_h if measured_h > 1 else min(default_h, max(600, screen_h - 120))
+            self.win.minsize(820, 560)
+            self.win.geometry(f"{width}x{height}")
+        dashboard = self._dashboard
+        if dashboard is None:  # pragma: no cover - 调用点已保证
+            return
+        dashboard.update_payload(self._payload)
 
     def _content_height(self, cells: list[Any], columns: int, geo: CardGeometry) -> int:
         """首次显示时该给多高：宫格按行数算，再补上顶栏与底栏图例。
@@ -1115,18 +1174,30 @@ class ClientWindow:
         stats: dict[str, Any] = {
             "viewer": self._viewer_id,
             "role": self._role,
-            "grid_cells": len(self._grid_frame.winfo_children()),
+            "grid_cells": len(self._grid_frame.winfo_children())
+            if self._dashboard is None
+            else 0,
             "bubble_components": len(self._payload.get("bubble") or []),
             "has_summary": "summary" in self._payload,
             "hidden_switch_visible": self._role != ROLE_TEACHER,
             "transparent_supported": False,
             "global_hotkey": self._hotkey.is_global,
         }
+        if self._dashboard is not None:
+            # 教师端：宫格不适用，改报仪表盘画出的图元数 —— 仍然是「真的画了东西」
+            # 这条冒烟判据（``__main__`` 用 ``grid_cells`` 的真假决定退出码）。
+            self._dashboard.render()
+            self.win.update()
+            drawn = len(self._dashboard._main_canvas.find_all())
+            stats["grid_cells"] = drawn
+            stats["dashboard_items"] = drawn
         self.set_minimized(True)
         self.win.update()
         stats["icon_items"] = len(self._icon.find_all())
         stats["transparent_supported"] = self._transparent
         self.set_minimized(False)
         self.win.update()
-        stats["grid_cells_after_restore"] = len(self._grid_frame.winfo_children())
+        stats["grid_cells_after_restore"] = (
+            len(self._grid_frame.winfo_children()) if self._dashboard is None else 0
+        )
         return stats

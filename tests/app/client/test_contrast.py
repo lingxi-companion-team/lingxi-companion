@@ -210,6 +210,18 @@ def test_hairlines_are_perceptible(token_name: str) -> None:
     assert contrast(color, CANVAS) >= 1.1
 
 
+def test_shadow_is_a_soft_edge_not_a_black_slab() -> None:
+    """偏移暗块阴影（决策 ⑥）两头受夹：要看得见，又不能变成硬边黑块。
+
+    它是 Tk 无阴影 API 时的近似画法（``rounded.draw_card_shadow``）：
+    下界保证「卡片下缘有一点厚度」看得出，上界防止它抢过卡片本身的层次
+    —— 阴影一旦比「白卡 vs 画布」（1.156）还重，就会读成一块糊上去的灰。
+    """
+    ratio = contrast(theme.SHADOW, CANVAS)
+    assert ratio >= 1.06, f"阴影压画布只有 {ratio:.3f}，等于没画"
+    assert ratio <= 1.25, f"阴影压画布达 {ratio:.3f}，太重，会变成硬边黑块"
+
+
 def test_surface_hierarchy_is_readable() -> None:
     """三档表面（白卡 / 蓝画布 / 浅框架面）两两都要看得出差别。
 

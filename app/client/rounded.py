@@ -28,6 +28,7 @@ from __future__ import annotations
 import tkinter as tk
 
 __all__ = [
+    "draw_card_shadow",
     "draw_pill",
     "draw_progress_bar",
     "draw_rounded_rect",
@@ -160,3 +161,51 @@ def draw_progress_bar(
     fill_width = max(min_width, span * ratio) if ratio > 0 else min_width
     fill_id = draw_pill(canvas, x0, y0, x0 + fill_width, y1, fill=fill, tags=tags)
     return track_id, fill_id
+
+
+#: 「偏移暗块」阴影的默认参数。Finserv 那种轻阴影是 ``0 1px 3px``，
+#: Tk 画不出真模糊，用「下移 1px、外扩 1px 的硬边暗块」近似（见 ``draw_card_shadow``）。
+SHADOW_DX = 0
+SHADOW_DY = 1
+SHADOW_SPREAD = 1
+
+
+def draw_card_shadow(
+    canvas: tk.Canvas,
+    x0: float,
+    y0: float,
+    x1: float,
+    y1: float,
+    radius: float,
+    *,
+    color: str,
+    dx: float = SHADOW_DX,
+    dy: float = SHADOW_DY,
+    spread: float = SHADOW_SPREAD,
+    tags: str | tuple[str, ...] | None = None,
+) -> int:
+    """画「偏移暗块」阴影：在卡片**下方**垫一个更大、略微下移的圆角矩形。
+
+    为什么是这个做法（方案 §2.1 方案 A）
+    ------------------------------------
+    Tkinter **没有阴影 API**（实测窗口 ``attributes()`` 只有
+    ``-alpha/-transparentcolor/-disabled/-fullscreen/-toolwindow/-topmost``，
+    Canvas 也只有 ``arc/bitmap/image/line/oval/polygon/rectangle/text/window``，
+    无渐变、无滤镜）。真阴影的三条路里：多层描边会画成「光晕」显得脏；
+    预生成位图每尺寸一张、要缓存还要处理缩放模糊，成本最高。
+    本项目已有「双层圆角矩形模拟 1px 边」的成熟做法，**偏移暗块是同一思路的延伸**：
+    零新依赖，得到一层硬边扁平投影，是 Finserv 轻阴影的合理近似。
+
+    调用顺序很重要：**先画这个，再画卡片本体**，否则暗块会盖住卡片。
+    返回值是暗块的 item id（调用方一般不关心，但保留以便将来做动画）。
+    """
+    return draw_rounded_rect(
+        canvas,
+        x0 - spread + dx,
+        y0 - spread + dy,
+        x1 + spread + dx,
+        y1 + spread + dy,
+        radius + spread,
+        fill=color,
+        tags=tags,
+    )
