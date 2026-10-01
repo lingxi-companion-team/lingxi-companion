@@ -15,6 +15,7 @@ from app.present.colors import (
     color_for,
     color_for_count,
     color_for_key,
+    color_for_key_count,
     is_dim,
 )
 from app.present.diag import diag_lines
@@ -26,6 +27,9 @@ from app.present.scale import (
     SCALE_STANDARD,
     WIDTH_COMPACT,
     WIDTH_ROOMY,
+    CardGeometry,
+    card_geometry,
+    columns_at,
     scale_for_width,
 )
 from app.present.shape import STATE_SHAPES, shape_for, shape_for_key
@@ -48,10 +52,14 @@ __all__ = [
     "Summary",
     "WIDTH_COMPACT",
     "WIDTH_ROOMY",
+    "CardGeometry",
+    "card_geometry",
     "changed_participants",
     "color_for",
     "color_for_count",
     "color_for_key",
+    "color_for_key_count",
+    "columns_at",
     "columns_for",
     "diag_lines",
     "freshness",

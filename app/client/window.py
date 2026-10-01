@@ -11,6 +11,26 @@ D3：**一个窗口，两种状态**
 本模块只做三件事：**读快照 → 调 ``app.present`` 的纯函数 → 用 Tkinter 画出来**。
 任何判定规则（谁占格、什么颜色、汇总怎么算、谁能看见谁）都在 :mod:`app.present` 里，
 且各有测试。把规则写到这里 = 既测不到（CI 跑在无显示环境）又违反设计稿 §3.2。
+
+v7 蓝白圆角（2026-09-30）
+------------------------
+整体从「中性灰 + 四色块」改为**蓝白两带 + 大圆角**：
+
+1. **颜色改由状态色承担，不再让状态色去当文字色**。原来的实现把状态色同时用在
+   竖条和状态名文字上（``text_color = state_color``），这**逼着四个状态色都必须
+   是文字级深色**，把它们全挤进同一条明度带里。现在拆开：竖条与形状符号（图形，
+   按 3:1 验）用状态色，状态名文字用 ``INK_2``。四个状态色因此有了色相与明度的
+   自由度，可以按「一眼可分」去选，而不必迁就文字对比度。
+2. **圆角靠 Canvas 样条画**（见 :mod:`app.client.rounded`），卡片、面板、按钮、
+   占比条统统带圆角。Tk 的样条在 16~28px 半径下最准，所以这套视觉正好落在它的
+   舒适区 —— 大圆角不是将就，是扬长。
+3. **状态卡改用 Canvas 画**而不是 ``Frame`` + ``Label``：圆角、圆头竖条、斜线纹理
+   裁切都需要在同一个坐标系里作画，用控件拼不出来（``Frame`` 没有圆角属性，
+   贴边斜线也没法裁）。代价是文字要自己 ``create_text`` 居中，收益是整格可控。
+
+学生端与教师端的结构差异（A2 / §04.2）在这里**只体现为「建不建面板」** ——
+判定「学生不该看到汇总」的是服务端（``hub.build_payload`` 对学生不下发
+``summary`` 键），这里只是不建组件。
 """
 
 from __future__ import annotations
@@ -20,6 +40,7 @@ import tkinter as tk
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from app.client import rounded
 from app.client.bubblewin import (
     BubbleWindow,
     ExitHotkey,
@@ -27,24 +48,40 @@ from app.client.bubblewin import (
     try_enable_transparency,
 )
 from app.client.theme import (
-    ACCENT,
     BG,
-    BORDER,
+    BRAND,
+    BRAND_SUBTLE,
     CARD_BG,
     FONT_BODY,
     FONT_BOLD,
     FONT_CAPTION,
+    FONT_LABEL,
+    FONT_MICRO,
     FONT_SMALL,
     FONT_TITLE,
+    FONT_TITLE_LG,
+    HAIRLINE,
+    HAIRLINE_STRONG,
     HEADER_BG,
     HIDDEN_BG,
     HIDDEN_FG,
+    HIDDEN_HATCH,
+    INK,
+    INK_2,
+    INK_HI,
+    MICRO,
     MINIMIZED_MARGIN,
     MINIMIZED_SIZE,
     OFFLINE_BG,
+    PANEL_BG,
+    RADIUS_LG,
+    SCALE_STANDARD,
+    SEGMENT_BAR_HEIGHT,
     SHAPE_GLYPHS,
-    TEXT,
-    TEXT_MUTED,
+    SPACING_LG,
+    SPACING_MD,
+    SPACING_XL,
+    STALE_DOT,
     TRANSPARENT_KEY,
 )
 from app.envelope import ROLE_STUDENT, ROLE_TEACHER
@@ -52,8 +89,12 @@ from app.present import (
     DIM_COLOR,
     LABEL_ORDER,
     LABEL_TEXT,
+    CardGeometry,
+    card_geometry,
     changed_participants,
     color_for_key,
+    color_for_key_count,
+    columns_at,
     columns_for,
     diag_lines,
     freshness_key,
@@ -70,19 +111,31 @@ SnapshotProvider = Callable[[], Mapping[str, Any]]
 #: 「对同学隐藏」开关的上报通道（写回服务端；可见性裁剪在服务端，客户端改不了）。
 HiddenReporter = Callable[[str, bool], None]
 
-#: 宫格单格的尺寸（含 3px 内边距后约 80×72）。
-CELL_WIDTH = 74
-CELL_HEIGHT = 64
+#: 状态卡尺寸（标准档）。权威值在 :mod:`app.present.scale` 的几何表里，
+#: 这里保留模块级常量只为兼容旧引用（``__all__`` 里导出过）。
+CELL_WIDTH = 98
+CELL_HEIGHT = 80
 
-#: 教师端汇总面板宽度。
-PANEL_WIDTH = 236
+#: 教师端汇总面板宽度（标准档）。同样以 ``present.scale`` 为准。
+PANEL_WIDTH = 268
 
 #: 汇总条形图的最大宽度（像素）。
 BAR_MAX_WIDTH = 108
 
+#: 顶栏高度。设计稿 §04.2：44px 够放标题 + 课堂号 chip + 控制按钮，
+#: 且与状态卡的高比（80px）拉开层级。
+HEADER_HEIGHT = 44
+
+#: 底部图例条高度。
+LEGEND_HEIGHT = 30
+
 #: 学生端的开关文案 —— 这是**硬要求**（R5）：不把真实可见范围写进文案，
 #: 就构成「误导性的隐私承诺」（学生以为老师也看不到）。
 HIDE_SWITCH_TEXT = "仅对同学隐藏（教师仍可见）"
+
+#: 卡片斜线纹理的步长（像素）。设计稿 §04.2「已隐藏」：45° 斜线，间距够疏才像
+#: 纹理而不是「划掉」。
+_HATCH_STEP = 9
 
 
 class ClientWindow:
@@ -152,6 +205,8 @@ class ClientWindow:
         # 边缘时逐像素变化不会触发连续重排 —— 分档缩放的好处就在这。
         self._last_scale = 1.0
         self.win.bind("<Configure>", self._on_resize)
+        # 图例画出来的实际宽度；``_build_legend`` 每次重排都会刷新它。
+        self._legend_width = 1
 
         self._expanded_frame.pack(fill="both", expand=True)
         self.refresh()
@@ -160,48 +215,190 @@ class ClientWindow:
     # ── 搭界面 ────────────────────────────────────────────────────────────
 
     def _build_expanded(self) -> None:
+        """搭出骨架。所有会随数据变化的内容都在 ``_render_*`` 里重画。
+
+        顶栏与底栏用 ``tk.Frame``（它们不需要圆角，且顶栏要放原生 Button —— 原生
+        按钮有系统外观，硬塞进 Canvas 反而更丑）。真正需要圆角的卡片、面板、
+        占比条都在 Canvas 上画。
+        """
         self._expanded_frame = tk.Frame(self.win, bg=BG)
 
-        header = tk.Frame(self._expanded_frame, bg=HEADER_BG, padx=12, pady=8)
+        # ── 顶栏 ──
+        # 左右**分成两个容器**，不再往同一条 pack 链上堆。
+        # 起因（实机截图）：学生端有「仅对同学隐藏（教师仍可见）」这一长句复选框，
+        # R5 要求文案不得简写，于是它与标题、状态、最小化四者挤在同一行 44px 里。
+        # Tk 的 pack 不换行，左右两侧请求宽度相加大于窗口时就相互重叠 —— 标题被
+        # 复选框盖住。现在左边只放品牌与身份，右边只放操作，两者互不侵占：
+        # 左边用 ``fill="x", expand=True`` 吃掉剩余空间，右边的操作区按自身宽度
+        # 贴右（``side="right"`` 先 pack，保证它优先拿到位置）。
+        header = tk.Frame(self._expanded_frame, bg=HEADER_BG, height=HEADER_HEIGHT)
         header.pack(fill="x")
-        tk.Label(
-            header, text="灵犀学伴 · 课堂共享宫格", bg=HEADER_BG, fg=TEXT, font=FONT_TITLE
-        ).pack(side="left")
-        self._status_label = tk.Label(
-            header, textvariable=self._status, bg=HEADER_BG, fg=TEXT_MUTED, font=FONT_SMALL
-        )
-        self._status_label.pack(side="left", padx=10)
-        tk.Button(header, text="最小化", command=self.toggle_minimized, width=8).pack(side="right")
+        header.pack_propagate(False)
+
+        # 操作区先 pack（pack 的先后即优先级）：它必须完整可见，不能被标题挤掉。
+        actions = tk.Frame(header, bg=HEADER_BG)
+        actions.pack(side="right", padx=(SPACING_MD, SPACING_XL))
+        tk.Button(
+            actions,
+            text="最小化",
+            command=self.toggle_minimized,
+            width=7,
+            relief="flat",
+            bg=HEADER_BG,
+            fg=INK,
+            activebackground=BRAND_SUBTLE,
+            activeforeground=INK,
+            highlightthickness=0,
+            bd=0,
+            font=FONT_BODY,
+            cursor="hand2",
+        ).pack(side="right")
         if self._role != ROLE_TEACHER:
+            # R5：文案不得简写 —— 不写清可见范围就是误导性的隐私承诺。
             tk.Checkbutton(
-                header,
+                actions,
                 text=HIDE_SWITCH_TEXT,
                 variable=self._hidden_var,
                 command=self._on_hidden_toggled,
                 bg=HEADER_BG,
-                fg=TEXT,
+                fg=INK,
                 activebackground=HEADER_BG,
+                activeforeground=INK,
                 selectcolor=CARD_BG,
+                highlightthickness=0,
+                bd=0,
                 font=FONT_BODY,
-            ).pack(side="right", padx=10)
+                cursor="hand2",
+            ).pack(side="right", padx=(0, SPACING_LG))
 
-        body = tk.Frame(self._expanded_frame, bg=BG, padx=12, pady=10)
-        body.pack(fill="both", expand=True)
-        self._grid_frame = tk.Frame(body, bg=BG)
-        self._grid_frame.pack(side="left", anchor="n")
-        self._panel_frame = tk.Frame(body, bg=CARD_BG, width=PANEL_WIDTH)
-
-        # 图例：把三种容易误读的记号写在界面上，省得用户猜。
+        # 身份区：品牌竖条 + 标题 + 状态，占据剩下的宽度。
+        brand = tk.Frame(header, bg=HEADER_BG)
+        brand.pack(side="left", fill="x", expand=True)
+        # 左侧品牌竖条：4px 宽 16px 高的圆头蓝条（设计稿 §04.2）。
+        # 用 Canvas 画而非 Frame —— 只有 Canvas 能画圆头。
+        accent_bar = tk.Canvas(brand, width=4, height=16, bg=HEADER_BG, highlightthickness=0, bd=0)
+        accent_bar.pack(side="left", padx=(SPACING_XL, SPACING_MD))
+        accent_bar.create_line(2, 0, 2, 16, fill=BRAND, width=4, capstyle="round")
+        # 标题与状态用同一条竖直中线对齐，读起来是「一个标题 + 一行副信息」，
+        # 而不是三个并列的独立控件。状态另外降一号字并与标题拉开，避免与标题
+        # 争抢视觉重量（Operate 模式：身份信息不是内容，标题才是）。
+        title_group = tk.Frame(brand, bg=HEADER_BG)
+        title_group.pack(side="left")
         tk.Label(
-            self._expanded_frame,
-            text=(
-                "● 维持中（本帧未达确认票数，沿用上一稳定状态）"
-                "　·　灰格 = 该同学已隐藏状态　·　白格 = 本帧无判定"
-            ),
-            bg=BG,
-            fg=TEXT_MUTED,
-            font=FONT_SMALL,
-        ).pack(anchor="w", padx=14, pady=(0, 8))
+            title_group,
+            text="灵犀学伴 · 课堂共享宫格",
+            bg=HEADER_BG,
+            fg=INK_HI,
+            font=FONT_TITLE_LG,
+        ).pack(side="left")
+        self._status_label = tk.Label(
+            title_group, textvariable=self._status, bg=HEADER_BG, fg=INK_2, font=FONT_SMALL
+        )
+        self._status_label.pack(side="left", padx=(SPACING_MD, 0))
+
+        # ── 主体：宫格 + 汇总面板 ──
+        # 宫格与图例同处一列并上下相邻：图例是宫格的读图说明，必须**紧跟宫格**。
+        # 早先把图例直接 pack 到 ``_expanded_frame`` 底部（fill="x" + expand 的兄弟），
+        # 窗口一高就把图例甩到窗口最下沿、中间留出一大片空白，读起来图例像是在讲
+        # 别的东西。现在把这一列交给 ``stack``，图例随宫格自然下沉。
+        body = tk.Frame(self._expanded_frame, bg=BG, padx=SPACING_XL, pady=SPACING_XL)
+        body.pack(fill="both", expand=True)
+        stack = tk.Frame(body, bg=BG)
+        stack.pack(side="left", anchor="n")
+        self._grid_frame = tk.Frame(stack, bg=BG)
+        self._grid_frame.pack(anchor="nw")
+        # 面板本身带圆角，所以用 Canvas 承载；内容由 ``_render_summary`` 画上去。
+        self._panel_canvas: tk.Canvas | None = None
+
+        # ── 底栏图例（紧跟宫格，不撑满宽度）──
+        legend = tk.Frame(stack, bg=BG, height=LEGEND_HEIGHT)
+        legend.pack(anchor="nw", pady=(SPACING_LG, 0))
+        legend.pack_propagate(False)
+        self._legend_frame = legend
+        self._build_legend()
+
+    def _build_legend(self) -> None:
+        """图例：把四个状态的形状 + 名称、以及「维持中 / 已隐藏 / 无结果」讲清楚。
+
+        以前是一行长文字（``● 维持中（本帧未达确认票数…）　·　灰格 = …``），
+        现在改成**每项一个胶囊**：形状符号与状态色同时在，读起来是「样本」而不是
+        「说明书」。形状是颜色之外的第二编码通道（灰度打印/色觉缺陷都还分得出）。
+
+        宽度自适应（晚于首版补上）：图例横排五项在紧凑档会超出窗口右缘，把
+        「已隐藏 斜线格：该同学…」直接切掉 —— 截图里就是这么断的，而且断在一句话
+        中间比不显示更糟。现在按可用宽度**从右往左丢**：先丢三条说明的补充句，
+        再整条丢掉「无结果 / 已隐藏」，最后只剩四个状态胶囊。四个状态胶囊本身
+        是必读项，任何宽度下都保留。
+        """
+        for child in self._legend_frame.winfo_children():
+            child.destroy()
+        canvas = tk.Canvas(
+            self._legend_frame, bg=BG, height=LEGEND_HEIGHT, highlightthickness=0, bd=0
+        )
+        canvas.pack(anchor="w")
+        mid = LEGEND_HEIGHT / 2 - 2
+
+        # 先量出四个状态胶囊的总宽（必留），据此决定右侧说明能放多少。
+        pills: list[tuple[str, str, str, int]] = []
+        probe = canvas.create_text(-9999, mid, text="", anchor="w", font=FONT_CAPTION)
+        for key in LABEL_ORDER:
+            label = LABEL_TEXT.get(key, key)
+            glyph = SHAPE_GLYPHS.get(shape_for_key(key), "─")
+            text = f"{glyph} {label}"
+            canvas.itemconfigure(probe, text=text)
+            _x0, _, _x1, _ = canvas.bbox(probe) or (0, 0, 60, 0)
+            pills.append((key, label, text, _x1 - _x0))
+        canvas.delete(probe)
+
+        pill_span = sum(w + 24 for _, _, _, w in pills) + 28  # 胶囊内边距 + 分隔线
+        # 说明按「重要 -> 次要」排序；宽度不够时从尾部整条丢弃。
+        notes = (
+            ("已隐藏", "斜线格：该同学已隐藏状态"),
+            ("无结果", "空卡：本帧未形成判定"),
+            ("●", "维持中：沿用上一稳定状态"),
+        )
+        avail = max(0, self._legend_frame.winfo_width() or 0)
+        if avail <= 1:  # 首次渲染窗口还没映射，给一个保守预算，下一次重排会纠正
+            avail = pill_span + 260
+
+        drawn_notes: list[tuple[str, int]] = []
+        probe2 = canvas.create_text(-9999, mid, text="", anchor="w", font=FONT_CAPTION)
+        budget = avail - pill_span
+        for sample, desc in notes:
+            text = f"{sample} {desc}"
+            canvas.itemconfigure(probe2, text=text)
+            _x0, _, _x1, _ = canvas.bbox(probe2) or (0, 0, 120, 0)
+            need = (_x1 - _x0) + 18
+            if need > budget:
+                continue  # 这条放不下，继续试更短的下一条
+            budget -= need
+            drawn_notes.append((text, _x1 - _x0))
+        canvas.delete(probe2)
+
+        x = 0.0
+        for key, _label, text, _w in pills:
+            color = color_for_key(key)
+            text_id = canvas.create_text(
+                x + 6, mid, text=text, anchor="w", fill=color, font=FONT_CAPTION
+            )
+            bx0, _, bx1, _ = canvas.bbox(text_id) or (x, 0, x + 40, 0)
+            # 胶囊底：状态色压到 12% 左右在白底上的近似 —— 直接用一个极浅的品牌蓝，
+            # 不与状态色混（混出来的色无法预先验对比度）。
+            rounded.draw_pill(canvas, bx0 - 6, mid - 9, bx1 + 6, mid + 9, fill=BRAND_SUBTLE)
+            canvas.tag_raise(text_id)
+            x = bx1 + 16
+        if drawn_notes:
+            canvas.create_line(x, mid - 8, x, mid + 8, fill=HAIRLINE_STRONG, width=1)
+            x += 14
+            for text, _w in drawn_notes:
+                text_id = canvas.create_text(
+                    x, mid, text=text, anchor="w", fill=MICRO, font=FONT_CAPTION
+                )
+                _x0, _, x1, _ = canvas.bbox(text_id) or (x, 0, x + 100, 0)
+                x = x1 + 18
+        # 让 Frame 的请求宽度跟随实际画出来的内容，图例不会再把窗口撑宽。
+        self._legend_width = int(x) if x > 0 else 1
+        canvas.configure(width=self._legend_width)
 
     def _build_minimized_surface(self) -> None:
         self._icon = tk.Canvas(
@@ -276,6 +473,10 @@ class ClientWindow:
         if scale != self._last_scale:
             self._last_scale = scale
             self._render_expanded()
+        else:
+            # 同档内宽度也会变，而图例是按可用宽度取舍说明项的 —— 不重画就会出现
+            # 「窗口变窄了，图例仍按旧宽度排」然后被右缘切掉。
+            self._build_legend()
 
     def _schedule_poll(self) -> None:
         self._after_id = self.win.after(self._poll_ms, self._poll)
@@ -445,51 +646,135 @@ class ClientWindow:
         for child in self._grid_frame.winfo_children():
             child.destroy()
         cells = list(self._payload.get("grid") or [])
-        columns = columns_for(len(cells))
-        # Step3 窗口缩放：倍率判定在 present.scale（阈值是产品决策，已测），
-        # 这里只做「乘」这一件画法的事。winfo_width 在窗口未映射时返回 1，
-        # 那时按标准档（首次渲染），映射后 _on_resize 会带真实宽度重画。
-        width = self.win.winfo_width()
-        scale = scale_for_width(width) if width > 1 else 1.0
+        # 先决定**这一帧要用哪一档**，再按那一档算列数。
+        #
+        # 关键顺序问题：``winfo_width()`` 在窗口尚未映射时返回 1（首次渲染必然如此），
+        # 那时既不能按 1px 去选档，也不能按 1px 算列数 —— 旧实现在这里直接令
+        # ``available`` 变成负数，``columns_at`` 夹到 1 列，于是首次渲染永远画成
+        # 28 行长龙，直到用户手动拖窗口才恢复。这里改成：宽度不可信时按**上一档**
+        # （首次为标准档）估算，并给一个「装得下宫格 + 面板」的最小宽度下限。
+        measured = self.win.winfo_width()
+        if measured > 1:
+            scale = scale_for_width(measured)
+        else:
+            scale = SCALE_STANDARD
+        geo = card_geometry(scale)
+        self._last_scale = scale
+
+        # 内容所需的最小宽度：宫格（按方阵算）+ 面板 + 全部留白。
+        columns_ideal = columns_for(len(cells))
+        grid_min = columns_ideal * (geo.width + geo.gap) + SPACING_XL * 2
+        if self._role == ROLE_TEACHER:
+            grid_min += geo.panel_width + SPACING_XL
+        # ``max`` 而非直接 ``geometry(...)``：用户把窗口拖大过这个下界时不该被缩回来。
+        if measured <= 1:
+            content_width = grid_min
+        else:
+            content_width = max(measured, grid_min)
+        self.win.minsize(grid_min, 1)
+
+        available = content_width - SPACING_XL * 2
+        if self._role == ROLE_TEACHER:
+            available -= geo.panel_width + SPACING_XL
+        columns = min(columns_for(len(cells)), columns_at(available, gap=geo.gap))
         for index, cell in enumerate(cells):
-            self._make_cell(cell, scale).grid(
-                row=index // columns, column=index % columns, padx=3, pady=3
+            widget = self._make_cell(cell, geo)
+            widget.grid(
+                row=index // columns,
+                column=index % columns,
+                padx=geo.gap // 2,
+                pady=geo.gap // 2,
             )
 
         if self._role == ROLE_TEACHER:
-            self._render_summary()
-        else:
-            # A2：学生端连汇总**组件**都不建 —— 服务端也没下发 ``summary``。
-            self._panel_frame.pack_forget()
+            self._render_summary(geo)
+        # A2：学生端连汇总**组件**都不建 —— 服务端也没下发 ``summary``。
 
         if self._autosize_pending:
             self._autosize_pending = False
-            self.win.geometry("")
+            # 首次显式给宽高，而不是 ``geometry("")`` 让 Tk 自己量 ——
+            # 自动量出来的是「所有控件自然尺寸之和」，在 28 人 + 面板时会宽到
+            # 超出屏幕，反而不如按最小下界给。
+            self.win.geometry(f"{content_width}x{self._content_height(cells, columns, geo)}")
 
-    def _make_cell(self, cell: Mapping[str, Any], scale: float = 1.0) -> tk.Widget:
-        """一格 = 一个参与者。
+    def _content_height(self, cells: list[Any], columns: int, geo: CardGeometry) -> int:
+        """首次显示时该给多高：宫格按行数算，再补上顶栏与底栏图例。
 
-        Step2 版式：**白卡**（CARD_BG）承载，状态色只出现在左侧 3px 竖条与形状
-        符号上 —— 整格染色在 28 人宫格里是一大片色块，扫一眼就累；把颜色压到边缘
-        后，「谁是什么状态」仍一眼可读，整体却轻很多。
+        ``chrome`` 的四项必须与 ``_build_expanded`` 里实际 pack 的控件一一对应，
+        否则「算出来的高度」与「画出来的高度」不一致，底栏会被挤掉（这正是本次
+        改版踩到的坑：图例框只有 30px，但 ``body`` 是 ``expand=True`` 先把空间
+        吃光，图例就被压到窗口外看不见）。逐项核对过：
 
-        - 形状符号来自 :func:`present.shape_for_key`（颜色之外的第二编码通道）；
-        - 文字色随 :func:`present.freshness_key` 三档衰减：fresh=TEXT / aging=TEXT_MUTED
-          / stale=HIDDEN_FG（维持中再叠 ● 角标）；
-        - hidden 格用斜线纹理（Canvas），与「无结果」的空卡区分开（§10.1 d2 仍占格）；
-        - Step3 变化高亮：本格在 ``_changed_ids`` 里时竖条 3px→5px，亮一拍后恢复
-          （判定在 present.diff，这里只读结果集合）；
-        - Step3 断网降级：``_offline`` 时竖条与状态文字全降饱和（DIM/TEXT_MUTED）——
-          数据不再新鲜，视觉「褪」掉一档，但格还在（R6：断联是常态）；
-        - Step3 窗口缩放：``scale`` 由 :func:`present.scale_for_width` 分档给出，
-          这里只乘尺寸。字号刻意**不**跟着缩——8pt 再缩就看不清了，格子的「呼吸感」
-          靠留白变化，不靠字变小。
+        - ``HEADER_HEIGHT`` 44 —— 顶栏 ``pack(fill="x")``；
+        - ``SPACING_XL * 2`` 24 —— 主体 ``pady=SPACING_XL`` 上下各一；
+        - ``LEGEND_HEIGHT`` 30 —— 底栏 ``height=LEGEND_HEIGHT``；
+        - ``SPACING_LG`` 8 —— 底栏 ``pady=(0, SPACING_LG)`` 的下边距。
+        """
+        rows = max(1, (len(cells) + columns - 1) // columns)
+        # 每格 grid 的 pady=gap//2 两侧都要算，所以是 (height + gap)。
+        grid_h = rows * (geo.height + geo.gap)
+        chrome = HEADER_HEIGHT + SPACING_XL * 2 + LEGEND_HEIGHT + SPACING_LG
+        # 教师端的面板可能比宫格高（尤其展开诊断），取两者之大。
+        if self._role == ROLE_TEACHER:
+            panel_h = self._panel_canvas_height()
+            grid_h = max(grid_h, panel_h)
+        # 屏幕高度兜底：小屏笔记本上宁可让底栏被挤，也不要窗口高到超出屏幕
+        # （超出后标题栏都点不到，用户没法拖动）。留 120px 给任务栏与窗口边框。
+        screen_cap = max(320, self.win.winfo_screenheight() - 120)
+        return int(min(grid_h + chrome, screen_cap))
+
+    def _panel_canvas_height(self) -> int:
+        """面板当前需要的高度（与 :meth:`_render_summary` 同一套算式）。"""
+        diag_expanded = getattr(self, "_diag_expanded", False)
+        if not diag_expanded:
+            return 96 + 4 * 30 + 44 + 22
+        lines = diag_lines(
+            self._payload,
+            viewer=self._viewer_id,
+            now_ts=time.time(),
+            refresh_ms=self._last_refresh_ms,
+        )
+        return 96 + 4 * 30 + 44 + (18 * len(lines) + 22)
+
+    def _make_cell(self, cell: Mapping[str, Any], geo: CardGeometry) -> tk.Widget:
+        """一格 = 一个参与者，整格用 Canvas 画。
+
+        为什么从 ``Frame``+``Label`` 改成 Canvas：圆角、圆头竖条、**裁切过的**
+        斜线纹理这三样都需要在同一个坐标系里作画。用控件拼不出来 —— ``Frame``
+        没有圆角属性，``Canvas`` 贴边斜线也没法裁（旧实现就是硬画的，斜线会戳出
+        卡片边界）。
+
+        三种形态的**判据**（都由服务端与 present 决定，这里只读）：
+
+        - 有 ``state`` 且 ``label`` 非空 → 状态卡（状态色竖条 + 形状 + 状态名）；
+        - ``hidden`` → 斜线纹理格（§10.1 d2：**仍占格**，因为 ``occupies_cell``
+          为真；这是「有，但不给你看」，不是「没有」）；
+        - 其余 → 空卡（本帧未形成判定，与 hidden 的纹理区分开）。
+
+        「状态」这件事被**三重编码**，任何单一通道失效都还读得出来：
+
+        1. **形状符号**（● ▲ ◆ ─）—— 灰度打印、色觉缺陷、投影仪偏色都不受影响；
+        2. **状态色**（竖条 + 中文名）—— 四值都经 ``test_contrast`` 守住 ≥4.5:1；
+        3. **中文名**（专注/困惑/分神/未知）—— 语言通道，前两者全废也还认得。
+
+        编号用 ``INK`` 系、随新鲜度衰减（fresh/aging/stale 三档都 ≥4.5:1）；
+        状态名用状态色，**不**随新鲜度衰减 —— 褪色的是「这条信息有多新」，
+        不是「这是什么状态」，混在一起会让 stale 格看起来像换了状态。
         """
         state = cell.get("state")
         hidden = bool(cell.get("hidden"))
         participant_id = str(cell.get("participant_id", "?"))
-        cell_w = max(48, int(CELL_WIDTH * scale))
-        cell_h = max(40, int(CELL_HEIGHT * scale))
+        width, height = geo.width, geo.height
+        radius = geo.radius
+
+        canvas = tk.Canvas(
+            self._grid_frame,
+            width=width,
+            height=height,
+            bg=BG,
+            highlightthickness=0,
+            bd=0,
+        )
 
         if isinstance(state, Mapping) and state.get("label"):
             key = str(state["label"])
@@ -500,60 +785,73 @@ class ClientWindow:
             glyph = SHAPE_GLYPHS.get(shape_for_key(key), "─")
             # 断网降级：颜色主通道整体褪掉，只留「有这么一格」的轮廓。
             bar_color = DIM_COLOR if self._offline else state_color
-            text_color = TEXT_MUTED if self._offline else state_color
-            # 变化高亮：竖条加粗一拍。离线时不高亮 —— 褪色的格不该再闪。
-            bar_width = 5 if (participant_id in self._changed_ids and not self._offline) else 3
-            frame = tk.Frame(
-                self._grid_frame,
-                bg=CARD_BG,
-                width=cell_w,
-                height=cell_h,
-                highlightbackground=BORDER,
-                highlightthickness=1,
-            )
-            frame.pack_propagate(False)
-            # 左侧状态竖条（颜色主通道，压到边缘；变化时加粗一拍）。
-            tk.Frame(frame, bg=bar_color, width=bar_width).pack(side="left", fill="y")
-            if self._offline:
-                fg = TEXT_MUTED
-            else:
-                fg = TEXT if level == "fresh" else TEXT_MUTED if level == "aging" else HIDDEN_FG
-            inner = tk.Frame(frame, bg=CARD_BG)
-            inner.pack(expand=True)
-            tk.Label(inner, text=participant_id, bg=CARD_BG, fg=fg, font=FONT_BOLD).pack()
-            tk.Label(
-                inner, text=f"{glyph} {sub_text}", bg=CARD_BG, fg=text_color, font=FONT_CAPTION
-            ).pack()
-            if stale:
-                # 「维持中」用小圆点角标，不换色 —— 契约层明确要求它**不是**新状态。
-                tk.Label(frame, text="●", bg=CARD_BG, fg=text_color, font=FONT_SMALL).place(
-                    x=cell_w - 13, y=1
-                )
-            return frame
+            # 状态名**用状态色**（不是在 docstring 里说的 INK_2）：
+            # 这是颜色之外的第二编码通道里的「颜色」那一半，去掉它之后就只剩形状
+            # 能分了 —— 而形状符号只有 8pt，远看几乎认不出。可达性靠三重冗余保障：
+            # 状态色本身压白卡 ≥4.5:1（test_contrast 守着），形状符号再兜一层，
+            # 中文名最后兜一层。旧实现的问题是「只用状态色」，不是「用了状态色」。
+            name_color = DIM_COLOR if self._offline else state_color
+            # 编号（次要信息）按新鲜度衰减：fresh=INK / aging=INK_2 / stale=MICRO。
+            id_color = INK if level == "fresh" else INK_2 if level == "aging" else MICRO
+            changed = participant_id in self._changed_ids and not self._offline
 
-        if hidden:
-            # §10.1 d2：仍占格、但不显示状态色；斜线纹理 = 「有，但不给你看」（R6 不醒目）。
-            canvas = tk.Canvas(
-                self._grid_frame,
-                width=cell_w,
-                height=cell_h,
-                bg=HIDDEN_BG,
-                highlightthickness=1,
-                highlightbackground=BORDER,
-                bd=0,
+            self._draw_card(canvas, width, height, radius)
+            # 左侧状态条：圆头、压在圆角之内（否则端帽会戳出卡片）。
+            # 宽度 5px：3px 在圆头端帽下半径只有 1.5px，样条基本画不出圆角
+            # （旧实现就是这样，端头看起来像被削平）。5px 才有可见的圆头。
+            bar_w = 6 if changed else 5
+            inset = 5.0
+            rounded.draw_pill(
+                canvas,
+                inset,
+                inset + 6,
+                inset + bar_w,
+                height - inset - 6,
+                fill=bar_color,
             )
-            for x in range(-cell_h, cell_w, 8):
-                canvas.create_line(x, cell_h, x + cell_h, 0, fill="#dde3ec", width=1)
+            text_left = inset + bar_w + 10
             canvas.create_text(
-                cell_w // 2,
-                cell_h // 2 - 7,
+                text_left,
+                height * 0.36,
                 text=participant_id,
-                fill=HIDDEN_FG,
+                anchor="w",
+                fill=id_color,
+                font=FONT_LABEL,
+            )
+            canvas.create_text(
+                text_left,
+                height * 0.68,
+                text=f"{glyph} {sub_text}",
+                anchor="w",
+                fill=name_color,
                 font=FONT_BOLD,
             )
+            if stale:
+                # 「维持中」用小圆点角标，不换色 —— 契约层明确要求它**不是**新状态。
+                # 位置贴右上圆角：旧实现放在 (width−radius*0.55, radius*0.55)，
+                # 在 98×80 的卡上正好落到圆角外沿，看起来像粘在边框上。
+                dot_r = 2.5
+                cx = width - 12.0
+                cy = 12.0
+                canvas.create_oval(
+                    cx - dot_r, cy - dot_r, cx + dot_r, cy + dot_r, fill=STALE_DOT, outline=""
+                )
+            return canvas
+
+        if hidden:
+            # §10.1 d2：仍占格、但不显示状态色（R6：不做醒目提示）。
+            self._draw_card(canvas, width, height, radius, fill=HIDDEN_BG)
+            self._draw_hatch(canvas, width, height, radius)
             canvas.create_text(
-                cell_w // 2,
-                cell_h // 2 + 11,
+                width / 2,
+                height * 0.40,
+                text=participant_id,
+                fill=HIDDEN_FG,
+                font=FONT_LABEL,
+            )
+            canvas.create_text(
+                width / 2,
+                height * 0.68,
                 text="已隐藏",
                 fill=HIDDEN_FG,
                 font=FONT_CAPTION,
@@ -562,144 +860,247 @@ class ClientWindow:
 
         # 本帧还没形成判定（融合层拒判 / 平滑层票数不足）。空卡 + 中性文案，
         # 与 hidden 的斜线纹理区分开：一个是「没有可展示的东西」，一个是「有但不给你看」。
-        frame = tk.Frame(
-            self._grid_frame,
-            bg=CARD_BG,
-            width=cell_w,
-            height=cell_h,
-            highlightbackground=BORDER,
-            highlightthickness=1,
-        )
-        frame.pack_propagate(False)
-        inner = tk.Frame(frame, bg=CARD_BG)
-        inner.pack(expand=True)
-        tk.Label(inner, text=participant_id, bg=CARD_BG, fg=TEXT_MUTED, font=FONT_BOLD).pack()
-        tk.Label(inner, text="无结果", bg=CARD_BG, fg=TEXT_MUTED, font=FONT_CAPTION).pack()
-        return frame
+        self._draw_card(canvas, width, height, radius)
+        canvas.create_text(width / 2, height * 0.40, text=participant_id, fill=INK, font=FONT_LABEL)
+        canvas.create_text(width / 2, height * 0.68, text="无结果", fill=INK_2, font=FONT_CAPTION)
+        return canvas
 
-    def _render_summary(self) -> None:
-        """教师端汇总面板：4 行状态分布 + 占比条（D1 分量 / D2 分母）。"""
-        for child in self._panel_frame.winfo_children():
-            child.destroy()
+    def _draw_card(
+        self,
+        canvas: tk.Canvas,
+        width: int,
+        height: int,
+        radius: float,
+        *,
+        fill: str = CARD_BG,
+    ) -> None:
+        """画卡片底：圆角 + 一圈极浅的轮廓。
+
+        原本是「白卡 + 1px 灰蓝描边」。实机看下来那圈线把卡片读成了「盒子」——
+        白底、圆角、等宽描边、整齐排列，正是任何同类页面都会产出的默认观感
+        （frontend-design 点名的 SaaS 卡片套件 tell 之一）。按「出门前摘掉一件
+        配饰」，摘掉的就是这圈线：卡片与画布靠**明度差**分开（``BG`` 是淡蓝灰、
+        ``CARD_BG`` 是纯白，对比 1.16:1），比一圈线更安静也更不容易显得廉价。
+
+        只保留一圈比填充深一档的**同色系**轮廓，且仅在卡片有状态色竖条时才有
+        意义 —— 它现在的作用是给圆角一个收口，而不是给卡片加边框。描边仍旧用
+        **双层**而不是 ``outline=``：Tk 的样条描边会把「重复控制点」也描出来，
+        圆角处会显得比直边粗一点；先画稍大的轮廓色圆角矩形、再在上面画填充色，
+        就得到一圈均匀的 1px 边。
+        """
+        rounded.draw_rounded_rect(
+            canvas, 0.5, 0.5, width - 0.5, height - 0.5, radius, fill=HAIRLINE
+        )
+        rounded.draw_rounded_rect(
+            canvas, 1.5, 1.5, width - 1.5, height - 1.5, max(1.0, radius - 1), fill=fill
+        )
+
+    def _draw_hatch(self, canvas: tk.Canvas, width: int, height: int, radius: float) -> None:
+        """45° 斜线纹理，**裁在圆角内**。
+
+        裁切在 Tk 上比看上去麻烦：``Canvas`` 没有通用的裁剪区域，而圆角又只能靠
+        ``create_polygon(smooth=True)`` 画。硬画斜线的后果是线头戳出圆角（旧实现
+        就是这样，斜线从卡片方角一直伸到外面，圆角显得像贴上去的）。
+
+        可行的办法是**限制线段端点**：每条 45° 线都算出它与「内缩 radius 后的矩形」
+        的交点，只画那一段。四角于是留白 —— 但那正好是圆角所在，看不出来。
+        代价是纹理覆盖率略低于满铺，视觉上完全够用（纹理只需传达「有内容」）。
+        """
+        pad = min(radius, min(width, height) / 2 - 2)
+        inner_w = width - pad * 2
+        inner_h = height - pad * 2
+        for offset in range(-int(inner_h), int(inner_w), _HATCH_STEP):
+            x0 = pad + offset
+            y0 = pad + inner_h
+            x1 = pad + offset + inner_h
+            y1 = pad
+            # 45° 线的端点在 x 方向夹紧后，y 也顺带夹住了（斜率是 ±1）。
+            if x0 < pad:
+                y0 -= pad - x0
+                x0 = pad
+            if x1 > pad + inner_w:
+                y1 += x1 - (pad + inner_w)
+                x1 = pad + inner_w
+            canvas.create_line(x0, y0, x1, y1, fill=HIDDEN_HATCH, width=1)
+
+    def _render_summary(self, geo: CardGeometry) -> None:
+        """教师端汇总面板：4 行状态分布 + 圆头占比条（D1 分量 / D2 分母）。
+
+        面板整块画在一张 Canvas 上（圆角容器 + 圆头占比条都要样条），所以这里
+        不是「搭控件」而是「按坐标画」。坐标从一个游标 ``y`` 往下推，改版时只动
+        这一处的数字。
+        """
         summary = self._payload.get("summary") or {}
         by_label = summary.get("by_label") or {}
         ratio = summary.get("ratio") or {}
         online = int(summary.get("online_count", 0))
 
-        tk.Label(self._panel_frame, text="课堂汇总", bg=CARD_BG, fg=TEXT, font=FONT_TITLE).pack(
-            anchor="w", padx=10, pady=(8, 0)
-        )
-        tk.Label(
-            self._panel_frame, text=f"在线 {online} 人", bg=CARD_BG, fg=TEXT_MUTED, font=FONT_SMALL
-        ).pack(anchor="w", padx=10, pady=(2, 8))
+        panel_w = geo.panel_width
+        # 面板高度按内容算，不留大块空白：标题 + 在线行 + 4 行 + 提示 + 诊断。
+        diag_expanded = getattr(self, "_diag_expanded", False)
+        diag_count = 0
+        diag_texts: list[str] = []
+        if diag_expanded:
+            diag_texts = diag_lines(
+                self._payload,
+                viewer=self._viewer_id,
+                now_ts=time.time(),
+                refresh_ms=self._last_refresh_ms,
+            )
+            diag_count = len(diag_texts)
+        panel_h = 96 + 4 * 30 + 44 + (18 * diag_count + 22 if diag_expanded else 22)
 
+        if self._panel_canvas is None or self._panel_is_stale(panel_w, panel_h):
+            if self._panel_canvas is not None:
+                self._panel_canvas.destroy()
+            self._panel_canvas = tk.Canvas(
+                self._grid_frame.master,
+                width=panel_w,
+                height=panel_h,
+                bg=BG,
+                highlightthickness=0,
+                bd=0,
+            )
+            self._panel_canvas.pack(side="left", anchor="n", padx=(SPACING_XL, 0))
+        canvas = self._panel_canvas
+        canvas.configure(width=panel_w, height=panel_h)
+        canvas.delete("all")
+        # 面板底：圆角 20px（RADIUS_LG）。这是界面上最大的一块圆角，除气泡外。
+        rounded.draw_rounded_rect(canvas, 0, 0, panel_w, panel_h, RADIUS_LG, fill=HAIRLINE_STRONG)
+        rounded.draw_rounded_rect(
+            canvas, 1, 1, panel_w - 1, panel_h - 1, RADIUS_LG - 1, fill=PANEL_BG
+        )
+
+        pad = 16
+        y = 18.0
+        canvas.create_text(pad, y, text="课堂汇总", anchor="w", fill=INK_HI, font=FONT_TITLE)
+        y += 20
+        canvas.create_text(
+            pad, y, text=f"在线 {online} 人", anchor="w", fill=INK_2, font=FONT_SMALL
+        )
+        y += 20
+
+        # 占比条几何：名称 46 / 计数 34 / 条自适应 / 百分比 42。
+        # 条宽**必须按面板宽反算**而不是用常量：``BAR_MAX_WIDTH=108`` 在 248px 的
+        # 紧凑档面板上会让「108 + 42 + 16(右留白)」越过右边框 —— 实测紧凑档下
+        # 百分比数字被画到了面板外。这里把条的可用宽度夹住，任何档位都不溢出。
+        name_w, count_w, pct_w = 46, 34, 42
+        bar_x = pad + name_w + count_w + 8
+        bar_max = max(24, panel_w - pad - bar_x - pct_w - 8)
+        bar_h = SEGMENT_BAR_HEIGHT
         for key in LABEL_ORDER:
             count = int(by_label.get(key, 0))
             share = float(ratio.get(key, 0.0))
-            color = color_for_key(key) if count else DIM_COLOR
-            row = tk.Frame(self._panel_frame, bg=CARD_BG)
-            row.pack(fill="x", padx=10, pady=2)
-            tk.Label(
-                row,
-                text=LABEL_TEXT.get(key, key),
-                bg=CARD_BG,
-                fg=color,
-                font=FONT_BOLD,
-                width=4,
-                anchor="w",
-            ).pack(side="left")
-            tk.Label(
-                row, text=f"{count}", bg=CARD_BG, fg=TEXT, font=FONT_BOLD, width=3, anchor="e"
-            ).pack(side="left")
-            bar = tk.Canvas(row, width=BAR_MAX_WIDTH, height=10, bg=BG, highlightthickness=0, bd=0)
-            bar.pack(side="left", padx=6)
-            # 1px 描边让占比条在白卡上有边界（Step2：纯画法，不改数值口径）。
-            bar.create_rectangle(0, 0, BAR_MAX_WIDTH, 10, outline=BORDER, width=1)
-            bar.create_rectangle(
-                0, 0, max(1, int(BAR_MAX_WIDTH * share)), 10, fill=color, outline=""
+            # 0 人的分量画成置灰占位 —— 但**仍然画一条**，这样四行的条长可对比；
+            # 「有没有」与「有但为 0」在颜色上区分（规则在 present.colors，已测）。
+            color = color_for_key_count(key, count)
+            mid = y + 8
+            canvas.create_text(
+                pad, mid, text=LABEL_TEXT.get(key, key), anchor="w", fill=color, font=FONT_BOLD
             )
-            tk.Label(
-                row,
-                text=f"{share * 100:.0f}%",
-                bg=CARD_BG,
-                fg=TEXT_MUTED,
-                font=FONT_SMALL,
-                width=4,
+            canvas.create_text(
+                pad + name_w + count_w,
+                mid,
+                text=str(count),
                 anchor="e",
-            ).pack(side="left")
-        tk.Label(
-            self._panel_frame,
-            text="（明细名单见最小化气泡：单击分量展开）",
-            bg=CARD_BG,
-            fg=TEXT_MUTED,
-            font=FONT_SMALL,
-        ).pack(anchor="w", padx=10, pady=(8, 8))
-        self._render_diag()
-        self._panel_frame.pack(side="left", anchor="n", padx=(14, 0))
-
-    def _render_diag(self) -> None:
-        """教师端诊断折叠区（Step4）：默认收起，点开显示 ``present.diag_lines`` 输出。
-
-        - 数据源是纯函数 ``diag_lines``（已测），这里只负责折叠/展开与逐行 render；
-        - 默认收起：诊断是给「想盯链路健康」的时刻准备的，不该占日常视野；
-        - 学生端根本进不了 ``_render_summary``（A2：payload 无 summary），所以
-          这个区天然只有教师端有，无需再判角色。
-        """
-        wrap = tk.Frame(self._panel_frame, bg=CARD_BG)
-        wrap.pack(fill="x", padx=10, pady=(0, 8))
-        expanded = getattr(self, "_diag_expanded", False)
-        arrow = "▾" if expanded else "▸"
-        head = tk.Label(
-            wrap,
-            text=f"{arrow} 诊断",
-            bg=CARD_BG,
-            fg=TEXT_MUTED,
-            font=FONT_CAPTION,
-            cursor="hand2",
-            anchor="w",
-        )
-        head.pack(fill="x")
-        head.bind("<Button-1>", lambda _e: self._toggle_diag())
-        if not expanded:
-            return
-        lines = diag_lines(
-            self._payload,
-            viewer=self._viewer_id,
-            now_ts=time.time(),
-            refresh_ms=self._last_refresh_ms,
-        )
-        for line in lines:
-            tk.Label(
-                wrap,
-                text=line,
-                bg=CARD_BG,
-                fg=TEXT_MUTED,
-                font=FONT_CAPTION,
+                fill=INK,
+                font=FONT_MICRO,
+            )
+            rounded.draw_progress_bar(
+                canvas,
+                bar_x,
+                mid - bar_h / 2,
+                bar_x + bar_max,
+                mid + bar_h / 2,
+                share,
+                track=HAIRLINE,
+                fill=color,
+                height=bar_h,
+            )
+            canvas.create_text(
+                bar_x + bar_max + 8,
+                mid,
+                text=f"{share * 100:.0f}%",
                 anchor="w",
-            ).pack(fill="x", padx=(10, 0))
+                fill=INK_2,
+                font=FONT_MICRO,
+            )
+            y += 30
+
+        y += 6
+        canvas.create_text(
+            pad,
+            y,
+            text="（明细名单见最小化气泡：单击分量展开）",
+            anchor="w",
+            fill=MICRO,
+            font=FONT_CAPTION,
+            width=panel_w - pad * 2,
+        )
+        y += 22
+
+        # 诊断折叠区：默认收起。数据源是纯函数 ``diag_lines``（已测），这里只管画。
+        arrow = "▾" if diag_expanded else "▸"
+        canvas.create_text(pad, y, text=f"{arrow} 诊断", anchor="w", fill=MICRO, font=FONT_CAPTION)
+        # 点击热区：整行都能点（不只是那三个字），省得用户瞄不准。
+        # 用透明填充的矩形 + ``fill=""``：Tk 里 ``fill=""`` 是「不填充」，
+        # 但**仍然参与命中测试** —— 这比只给文字绑事件宽容得多。
+        canvas.create_rectangle(
+            0, y - 10, panel_w, y + 10, outline="", fill="", width=0, tags="diag_hit"
+        )
+        canvas.tag_bind("diag_hit", "<Button-1>", lambda _e: self._toggle_diag())
+        # 手型光标只在**这一条热区**上出现，不是整块面板：面板上还有别的东西
+        # （占比条、名单提示），整块给手型会让人以为到处都能点。
+        canvas.tag_bind("diag_hit", "<Enter>", lambda _e: canvas.configure(cursor="hand2"))
+        canvas.tag_bind("diag_hit", "<Leave>", lambda _e: canvas.configure(cursor=""))
+        y += 18
+        if diag_expanded:
+            for line in diag_texts:
+                canvas.create_text(pad + 8, y, text=line, anchor="w", fill=MICRO, font=FONT_MICRO)
+                y += 18
+
+    def _panel_is_stale(self, width: int, height: int) -> bool:
+        """面板 Canvas 尺寸变了才重建（否则每次刷新都重建一遍控件，闪）。"""
+        canvas = self._panel_canvas
+        if canvas is None:
+            return True
+        try:
+            return int(canvas.cget("width")) != width or int(canvas.cget("height")) != height
+        except (tk.TclError, ValueError):
+            return True
 
     def _toggle_diag(self) -> None:
         self._diag_expanded = not getattr(self, "_diag_expanded", False)
         self._render()
 
     def _render_icon(self) -> None:
-        """最小化态：56×56 的圆 + 「灵」字（背景透明不可用时退回实心方底）。"""
+        """最小化态：56×56 的圆 + 「灵」字（背景透明不可用时退回实心方底）。
+
+        字体走 ``theme`` 而不是硬编码 —— 旧实现这里写死了 ``"Microsoft YaHei UI"``，
+        绕过了主题的回退链（教室机器没这个字体时，只有这一个字会掉回默认字体）。
+        """
         size = MINIMIZED_SIZE
         color = self._icon_color()
         self._icon.configure(bg=TRANSPARENT_KEY if self._transparent else BG)
         self._icon.delete("all")
-        self._icon.create_oval(1, 1, size - 1, size - 1, fill=color, outline="#ffffff", width=2)
+        # 白色外圈让圆从任何底色上「浮」起来（透明不可用时它压在蓝画布上）。
+        self._icon.create_oval(0, 0, size, size, fill=CARD_BG, outline="")
+        self._icon.create_oval(1, 1, size - 1, size - 1, fill=color, outline="")
         self._icon.create_text(
-            size / 2, size / 2, text="灵", fill="#ffffff", font=("Microsoft YaHei UI", 13, "bold")
+            size / 2, size / 2, text="灵", fill=CARD_BG, font=(FONT_TITLE[0], 15, "bold")
         )
         if self._own_stale():
-            self._icon.create_oval(size - 14, 4, size - 7, 11, fill="#ffffff", outline="")
+            dot_r = 3.5
+            cx, cy = size - 12, 12
+            self._icon.create_oval(
+                cx - dot_r, cy - dot_r, cx + dot_r, cy + dot_r, fill=STALE_DOT, outline=CARD_BG
+            )
 
     def _icon_color(self) -> str:
         if self._role == ROLE_TEACHER:
-            return ACCENT
+            return BRAND
         components = self._payload.get("bubble") or []
-        return str(components[0].get("color", ACCENT)) if components else HIDDEN_FG
+        return str(components[0].get("color", BRAND)) if components else HIDDEN_FG
 
     # ── 冒烟自检（供 ``python -m app.client --selftest``）──────────────────
 

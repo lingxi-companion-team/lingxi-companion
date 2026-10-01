@@ -19,6 +19,13 @@ bindtag 会把这些事件一并送进回调。于是「重排宫格 = 销毁并
 ``_on_resize`` 因此加了两道闸：``event.widget is not self.win`` 直接 return
 （只认主窗口的 Configure），以及跨档判断（``scale`` 没变就不重排）。
 下面是这两道闸的机器化护栏。
+
+关于测试里的宽度取值
+--------------------
+**不要写死具体像素**（如 700 / 1100），因为分档阈值是产品决策、会随卡片尺寸变
+（v7 就把 600/900 上移到 720/1120）。原先写死宽度的三条测试因此在这轮调整里全红，
+而它们本该守的是「跨档才重排」这个**性质**，不是「阈值等于某个数」。
+现在一律从 ``WIDTH_COMPACT`` / ``WIDTH_ROOMY`` 推导，阈值再动也不会误报。
 """
 
 from __future__ import annotations
@@ -28,9 +35,19 @@ from typing import Any
 import pytest
 
 from app.client.window import ClientWindow
-from app.present import SCALE_COMPACT, SCALE_ROOMY, SCALE_STANDARD, scale_for_width
+from app.present import (
+    SCALE_COMPACT,
+    SCALE_ROOMY,
+    SCALE_STANDARD,
+    WIDTH_COMPACT,
+    WIDTH_ROOMY,
+    scale_for_width,
+)
 
 pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning")
+
+#: 明确落在**标准档**中间的宽度（阈值推导，不写死）。
+_IN_STANDARD = (WIDTH_COMPACT + WIDTH_ROOMY) // 2
 
 
 class _FakeWidget:
@@ -60,11 +77,18 @@ def _bare_window() -> ClientWindow:
     win._minimized = False
     win._last_scale = SCALE_STANDARD
     win._rendered = 0  # type: ignore[attr-defined]
+    win._legend_rendered = 0  # type: ignore[attr-defined]
 
     def _render_expanded() -> None:
         win._rendered += 1  # type: ignore[attr-defined]
 
+    def _build_legend() -> None:
+        # 同档内 ``_on_resize`` 会重画图例（图例按可用宽度取舍说明项），
+        # 这里同样只计数，不碰真控件 —— 本文件测的是**派发过滤**，不是绘制。
+        win._legend_rendered += 1  # type: ignore[attr-defined]
+
     win._render_expanded = _render_expanded  # type: ignore[method-assign]
+    win._build_legend = _build_legend  # type: ignore[method-assign]
     return win
 
 
@@ -73,12 +97,12 @@ class TestChildConfigureIsIgnored:
 
     def test_child_widget_configure_is_ignored(self) -> None:
         win = _bare_window()
-        win._on_resize(_FakeEvent(_FakeWidget("a grid cell"), width=1200))
+        win._on_resize(_FakeEvent(_FakeWidget("a grid cell"), width=WIDTH_ROOMY + 100))
         assert win._rendered == 0  # type: ignore[attr-defined]
 
     def test_main_window_configure_is_processed(self) -> None:
         win = _bare_window()
-        win._on_resize(_FakeEvent(win.win, width=1200))
+        win._on_resize(_FakeEvent(win.win, width=WIDTH_ROOMY + 100))
         assert win._rendered == 1  # type: ignore[attr-defined]
 
     def test_many_child_events_never_render(self) -> None:
@@ -94,25 +118,47 @@ class TestCrossBandOnly:
 
     def test_same_band_does_not_render(self) -> None:
         win = _bare_window()
-        win._on_resize(_FakeEvent(win.win, width=700))
-        win._on_resize(_FakeEvent(win.win, width=701))
-        win._on_resize(_FakeEvent(win.win, width=899))
+        # 三次都落在标准档内（含两个边界内侧），都不该触发重排。
+        for width in (_IN_STANDARD - 20, _IN_STANDARD, _IN_STANDARD + 20):
+            assert scale_for_width(width) == SCALE_STANDARD
+            win._on_resize(_FakeEvent(win.win, width=width))
         assert win._rendered == 0  # type: ignore[attr-defined]
+
+    def test_same_band_still_rebuilds_legend(self) -> None:
+        """同档内**不重排宫格，但要重画图例**。
+
+        图例是按可用宽度取舍说明项的（放不下就从尾部丢），所以窗口在同档内变窄时
+        也必须重画，否则会按旧宽度排版、被右缘切掉。这两件事必须分开断言：
+        ``_render_expanded`` 计数不变，``_build_legend`` 每次都要跑。
+        """
+        win = _bare_window()
+        for width in (_IN_STANDARD - 20, _IN_STANDARD, _IN_STANDARD + 20):
+            win._on_resize(_FakeEvent(win.win, width=width))
+        assert win._rendered == 0  # type: ignore[attr-defined]
+        assert win._legend_rendered == 3  # type: ignore[attr-defined]
 
     def test_crossing_band_renders_once(self) -> None:
         win = _bare_window()
-        win._on_resize(_FakeEvent(win.win, width=1100))  # standard -> roomy
+        win._on_resize(_FakeEvent(win.win, width=WIDTH_ROOMY))  # standard -> roomy
         assert win._rendered == 1  # type: ignore[attr-defined]
-        win._on_resize(_FakeEvent(win.win, width=1150))  # 仍在 roomy
+        win._on_resize(_FakeEvent(win.win, width=WIDTH_ROOMY + 50))  # 仍在 roomy
         assert win._rendered == 1  # type: ignore[attr-defined]
 
     def test_band_boundaries_match_present_scale(self) -> None:
         # 护栏与 present.scale 的分档必须一致（阈值是产品决策，只在 present 定义）。
         win = _bare_window()
-        win._last_scale = scale_for_width(500)
+        win._last_scale = scale_for_width(WIDTH_COMPACT - 1)
         assert win._last_scale == SCALE_COMPACT
-        win._on_resize(_FakeEvent(win.win, width=950))
+        win._on_resize(_FakeEvent(win.win, width=WIDTH_ROOMY))
         assert win._last_scale == SCALE_ROOMY
+        assert win._rendered == 1  # type: ignore[attr-defined]
+
+    def test_compact_to_standard_crosses_too(self) -> None:
+        """紧凑 → 标准也要重排一次（不能只测「跳到宽敞档」那条路径）。"""
+        win = _bare_window()
+        win._last_scale = scale_for_width(WIDTH_COMPACT - 1)
+        win._on_resize(_FakeEvent(win.win, width=WIDTH_COMPACT))
+        assert win._last_scale == SCALE_STANDARD
         assert win._rendered == 1  # type: ignore[attr-defined]
 
 
@@ -120,5 +166,5 @@ class TestMinimizedSuppressesResize:
     def test_minimized_ignores_main_window_configure(self) -> None:
         win = _bare_window()
         win._minimized = True
-        win._on_resize(_FakeEvent(win.win, width=1200))
+        win._on_resize(_FakeEvent(win.win, width=WIDTH_ROOMY + 100))
         assert win._rendered == 0  # type: ignore[attr-defined]
