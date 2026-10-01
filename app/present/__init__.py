@@ -22,6 +22,18 @@ from app.present.colors import (
 from app.present.diag import diag_lines
 from app.present.diff import changed_participants
 from app.present.grid import MAX_GRID_COLUMNS, columns_for, grid_cells, sort_key
+from app.present.kpi import KpiCard, kpi_cards
+from app.present.layout import (
+    INSPECTOR_FULL,
+    INSPECTOR_HIDDEN,
+    INSPECTOR_NARROW,
+    NAV_FULL,
+    NAV_HIDDEN,
+    NAV_ICONS,
+    Layout,
+    layout_for_width,
+)
+from app.present.roster import RosterRow, roster_rows
 from app.present.scale import (
     SCALE_COMPACT,
     SCALE_ROOMY,
@@ -35,23 +47,46 @@ from app.present.scale import (
 )
 from app.present.shape import STATE_SHAPES, shape_for, shape_for_key
 from app.present.status import FRESH_AGING_SECONDS, freshness, freshness_key, offline
-from app.present.summary import DISPLAY_LABELS, LABEL_ORDER, LABEL_TEXT, Summary, summarize
+from app.present.summary import (
+    CLOSED_KEY,
+    CLOSED_TEXT,
+    DISPLAY_LABELS,
+    LABEL_ORDER,
+    LABEL_TEXT,
+    Summary,
+    summarize,
+)
+from app.present.trend import DEFAULT_TREND_WINDOW, TrendBuffer, TrendSample
 from app.present.visibility import visible_to
 
 __all__ = [
     "CLOSED_COLOR",
+    "CLOSED_KEY",
+    "CLOSED_TEXT",
+    "DEFAULT_TREND_WINDOW",
     "DIM_COLOR",
     "DISPLAY_LABELS",
     "FRESH_AGING_SECONDS",
+    "INSPECTOR_FULL",
+    "INSPECTOR_HIDDEN",
+    "INSPECTOR_NARROW",
     "LABEL_ORDER",
     "LABEL_TEXT",
     "MAX_GRID_COLUMNS",
+    "NAV_FULL",
+    "NAV_HIDDEN",
+    "NAV_ICONS",
     "SCALE_COMPACT",
     "SCALE_ROOMY",
     "SCALE_STANDARD",
     "STATE_COLORS",
     "STATE_SHAPES",
+    "KpiCard",
+    "Layout",
+    "RosterRow",
     "Summary",
+    "TrendBuffer",
+    "TrendSample",
     "WIDTH_COMPACT",
     "WIDTH_ROOMY",
     "CardGeometry",
@@ -68,7 +103,10 @@ __all__ = [
     "freshness_key",
     "grid_cells",
     "is_dim",
+    "kpi_cards",
+    "layout_for_width",
     "offline",
+    "roster_rows",
     "scale_for_width",
     "shape_for",
     "shape_for_key",

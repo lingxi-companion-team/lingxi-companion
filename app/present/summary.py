@@ -20,7 +20,15 @@ from typing import Any
 from app.envelope import ParticipantState
 from common.perception_types import EMOTION_LABELS, EmotionLabel
 
-__all__ = ["DISPLAY_LABELS", "LABEL_ORDER", "LABEL_TEXT", "Summary", "summarize"]
+__all__ = [
+    "CLOSED_KEY",
+    "CLOSED_TEXT",
+    "DISPLAY_LABELS",
+    "LABEL_ORDER",
+    "LABEL_TEXT",
+    "Summary",
+    "summarize",
+]
 
 #: 展示用的 4 个状态，**顺序固定**（设计稿 §10.1 d1：0 人分量也保留占位，不随人数增减）。
 #:
@@ -46,6 +54,16 @@ LABEL_TEXT: dict[str, str] = {
     EmotionLabel.DISTRACTED.value: "分神",
     EmotionLabel.UNKNOWN.value: "未知",
 }
+
+#: 「已关闭感知」这一档在**线路格式里的键**。它**不是** ``EmotionLabel`` 成员，
+#: 所以不能进 :data:`LABEL_ORDER`（那个元组的键恒为 4 个情感标签，``test_summary.py``
+#: 钉住了）。但 KPI 卡片与名单表都要用它当第 5 个分量键，所以单独给一个常量，
+#: 避免各处硬编码字符串 "closed" 出现拼写漂移。
+CLOSED_KEY = "closed"
+
+#: 「已关闭感知」的中文展示名。与 :data:`LABEL_TEXT` 分开定义：后者必须恒等于
+#: :data:`LABEL_ORDER` 的键集合（有测试），塞进来会打破那条不变式。
+CLOSED_TEXT = "已关闭感知"
 
 
 @dataclass(frozen=True)
