@@ -7,24 +7,42 @@ Tkinter 的 ``Frame`` 没有圆角属性。想要圆角只有两条路：
 1. 给控件贴一张带圆角的位图 —— 需要 PIL，且每个尺寸都要生成一张，还得处理缩放模糊；
 2. **在 Canvas 上用 ``create_polygon(smooth=True)`` 画** —— 零依赖、任意尺寸、矢量清晰。
 
-本项目选 2。这不是将就，反而是优势：Tk 的样条逼近在**大半径**下更准
-（实测任意半径最多偏离真圆 6.1%，半径 16px 时约 0.97px，肉眼不可辨），
-而小半径（3~6px）反而会因为取样点太少显出「钝角」。所以本模块的圆角画法在
-16~28px 区间是它的最佳工况。
+本项目选 2。
+
+⚠️ 2026-10-01 纠正：**「重复角点」写法画不出圆角**
+--------------------------------------------------
+本模块原先沿用了一个流传很广的 Tk 圆角配方：把每个角点**写两遍**，
+指望 ``smooth=True`` 的样条以它为控制点把两条边柔顺连起来。
+
+**这个配方是错的** —— 实测（``Canvas.find_overlapping`` 精确命中测试，见下）
+得到的四个角是**纯直角**，一点都没切。原因：Tk 的样条把**相邻重复点**当作
+「此处要尖角」，于是重复角点恰好把圆角写成了尖角。
+
+实测数据（画一个 120×120、传入半径 40 的矩形，沿顶边逐行量「切角量」，
+理想圆弧应给出 ``33.7 24.8 18.9 13.5 8.8 5.4 2.5 0.8``）::
+
+    旧写法（角点重复 2 次）   0.0  0.0  0.0  0.0  0.0  0.0  0.0  0.0   ← 直角！
+    经典配方（角点 1 次, off=r） 13.0 7.0 4.0 1.5 0.5 0.0 0.0 0.0  ← 半径只有 r/3
+    圆弧采样（本实现, 6 段）   34.0 25.0 19.0 13.5 9.0 5.5 2.5 1.0  ← 与理想重合
+
+所以本实现改成**沿每个角的 1/4 圆弧密集取点**：点落在真圆弧上，Tk 的样条
+（它穿过相邻控制点的中点）自然贴合圆弧，实测与理想圆的偏差 ≤1px。
+
+代价是点数变多（每角 7 个点，共 28 个），但 Canvas 多边形这点开销可以忽略。
+
+关于「半径越大越平滑」
+----------------------
+Tk 的样条在**大半径**下更准；小半径（3~6px）取样点太少反而显「钝角」。
+所以本模块的圆角在 16~28px 区间是它的最佳工况。
 
 本模块是**纯画法**：只碰传入的 Canvas，不做任何业务判断（判定规则在
 :mod:`app.present`）。放在 ``app/client/`` 意味着它不参与覆盖率统计，所以这里
 刻意只留「给定坐标画个形状」这种一眼能验的代码，任何 if/else 语义判断都不要加。
-
-关于 ``smooth=True`` 的取样点约定
----------------------------------
-Tk 的样条把**每个重复点**当作一个控制点。圆角矩形的经典写法是把每个角点写两遍
-（``x0,y0`` → ``x0,y0``），样条就会以该点为控制点把相邻两边柔顺地连起来。
-本模块的 ``_corner`` 就是为这个约定服务的。
 """
 
 from __future__ import annotations
 
+import math
 import tkinter as tk
 
 __all__ = [
@@ -35,13 +53,13 @@ __all__ = [
     "rounded_rect_points",
 ]
 
-#: 圆角矩形每个角重复的坐标点数。Tk 的样条需要重复点当控制点；
-#: 本模块统一重复**两次**（即同一个点写两遍），这是最省点且最稳的写法。
-_CORNER_DUPES = 2
+#: 每个角的 1/4 圆弧采样段数。实测 6 段已与理想圆重合（偏差 ≤1px），
+#: 再加密收益递减 —— 见模块 docstring 的对照表。
+_CORNER_STEPS = 6
 
 
 def _clamp_radius(radius: float, width: float, height: float) -> float:
-    """把半径夹到不超过短边的一半 —— 超了样条会自交，画出畸形。"""
+    """把半径夹到不超过短边的一半 —— 超了圆弧会互相穿透，画出畸形。"""
     return max(0.0, min(float(radius), min(width, height) / 2.0))
 
 
@@ -54,34 +72,40 @@ def rounded_rect_points(
 ) -> list[float]:
     """算出圆角矩形的**控制点序列**（``create_polygon`` 用）。
 
-    返回扁平的 ``[x, y, x, y, ...]``。每个角点写两遍（Tk 样条的约定）。
-    半径会被夹到短边一半以内：``radius`` 传个 999 也能安全画出胶囊。
+    返回扁平的 ``[x, y, x, y, ...]``。半径会被夹到短边一半以内：``radius``
+    传个 999 也能安全画出胶囊。
 
-    点序是顺时针：左上 → 右上 → 右下 → 左下。顺序本身不影响填充，但保持一致
-    便于调试时对照。
+    点序是顺时针：右上角弧 → 右下角弧 → 左下角弧 → 左上角弧。四条直边由相邻
+    两段弧的端点自然连成，不需要额外加点。
     """
     width, height = x1 - x0, y1 - y0
     r = _clamp_radius(radius, width, height)
+    if r <= 0.0:
+        # 退化情形：没有半径就退回一个普通矩形（仍然按顺时针给点）。
+        return [
+            float(x0),
+            float(y0),
+            float(x1),
+            float(y0),
+            float(x1),
+            float(y1),
+            float(x0),
+            float(y1),
+        ]
+
     points: list[float] = []
 
-    def corner(cx: float, cy: float) -> None:
-        for _ in range(_CORNER_DUPES):
-            points.extend((float(cx), float(cy)))
+    def arc(cx: float, cy: float, start_deg: float) -> None:
+        """从 ``start_deg`` 起，顺时针扫 90°，沿圆弧取 ``_CORNER_STEPS+1`` 个点。"""
+        for index in range(_CORNER_STEPS + 1):
+            angle = math.radians(start_deg + 90.0 * index / _CORNER_STEPS)
+            points.extend((cx + r * math.cos(angle), cy + r * math.sin(angle)))
 
-    # 从左上角的「上边起点」开始，顺时针绕一圈。每个角记录它的顶点，
-    # 样条会把它当作控制点、把前后两条直边柔顺连起来。
-    points.extend((float(x0 + r), float(y0)))
-    points.extend((float(x1 - r), float(y0)))
-    corner(x1, y0)
-    points.extend((float(x1), float(y0 + r)))
-    points.extend((float(x1), float(y1 - r)))
-    corner(x1, y1)
-    points.extend((float(x1 - r), float(y1)))
-    points.extend((float(x0 + r), float(y1)))
-    corner(x0, y1)
-    points.extend((float(x0), float(y1 - r)))
-    points.extend((float(x0), float(y0 + r)))
-    corner(x0, y0)
+    # 屏幕坐标 y 向下。四个圆心各自内缩 r。
+    arc(x1 - r, y0 + r, -90.0)  # 右上：(x1-r,y0) -> (x1,y0+r)
+    arc(x1 - r, y1 - r, 0.0)  # 右下：(x1,y1-r) -> (x1-r,y1)
+    arc(x0 + r, y1 - r, 90.0)  # 左下：(x0+r,y1) -> (x0,y1-r)
+    arc(x0 + r, y0 + r, 180.0)  # 左上：(x0,y0+r) -> (x0+r,y0)
     return points
 
 

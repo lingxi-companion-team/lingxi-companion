@@ -30,6 +30,8 @@ from app.client.theme import (
     INK,
     INK_2,
     MICRO,
+    RADIUS_LG,
+    RADIUS_SM,
     RADIUS_XS,
     SHADOW,
 )
@@ -86,8 +88,11 @@ def draw_table(
     画得下、不溢出。空列表画一句空态文案（筛选后为空是常态，不能留一片白）。
     """
     x1 = x0 + width
-    rounded.draw_card_shadow(canvas, x0, y0, x1, y0 + height, RADIUS_XS + 4, color=SHADOW)
-    rounded.draw_rounded_rect(canvas, x0, y0, x1, y0 + height, RADIUS_XS + 4, fill=CARD_BG)
+    # 表格外框用 **RADIUS_LG（20）**，与它上方的「状态分布」卡片同档 —— 中栏两张
+    # 大卡半径一致，整列读起来是一套；此前这里是 ``RADIUS_XS + 4``（12），
+    # 比上方卡片小一圈，两张卡摞在一起时圆角「一深一浅」很明显。
+    rounded.draw_card_shadow(canvas, x0, y0, x1, y0 + height, RADIUS_LG, color=SHADOW)
+    rounded.draw_rounded_rect(canvas, x0, y0, x1, y0 + height, RADIUS_LG, fill=CARD_BG)
 
     edges = _column_edges(x0, width)
     pad = 14
@@ -122,7 +127,7 @@ def draw_table(
         cy = top + ROW_HEIGHT / 2
         if hover_index == index:
             rounded.draw_rounded_rect(
-                canvas, x0 + 6, top + 2, x1 - 6, top + ROW_HEIGHT - 2, RADIUS_XS, fill=BRAND_SUBTLE
+                canvas, x0 + 6, top + 2, x1 - 6, top + ROW_HEIGHT - 2, RADIUS_SM, fill=BRAND_SUBTLE
             )
 
         # 头像圆：编号首字。
@@ -135,9 +140,7 @@ def draw_table(
             fill=row.color,
             outline="",
         )
-        canvas.create_text(
-            avatar_cx, cy, text=row.initial, fill=CARD_BG, font=FONT_BOLD
-        )
+        canvas.create_text(avatar_cx, cy, text=row.initial, fill=CARD_BG, font=FONT_BOLD)
         canvas.create_text(
             avatar_cx + _AVATAR / 2 + 9,
             cy,
@@ -161,9 +164,7 @@ def draw_table(
             RADIUS_XS,
             fill=CHIP_BG,
         )
-        canvas.create_oval(
-            chip_x + 10, cy - 3.5, chip_x + 17, cy + 3.5, fill=row.color, outline=""
-        )
+        canvas.create_oval(chip_x + 10, cy - 3.5, chip_x + 17, cy + 3.5, fill=row.color, outline="")
         canvas.create_text(
             chip_x + 23, cy, text=row.label_text, anchor="w", fill=INK, font=FONT_SMALL
         )
@@ -192,9 +193,7 @@ def draw_table(
                 font=FONT_MICRO,
             )
         else:
-            canvas.create_text(
-                bar_x0, cy, text="—", anchor="w", fill=MICRO, font=FONT_SMALL
-            )
+            canvas.create_text(bar_x0, cy, text="—", anchor="w", fill=MICRO, font=FONT_SMALL)
 
         # 更新时间：按新鲜度给不同文字（判定在 present.status，这里只映射文案）。
         age_text = {"fresh": "刚刚", "aging": "稍旧", "stale": "维持中"}.get(row.freshness, "—")
@@ -208,7 +207,5 @@ def draw_table(
         )
         drawn += 1
         if index < max_rows - 1:
-            canvas.create_line(
-                x0 + 10, top + ROW_HEIGHT, x1 - 10, top + ROW_HEIGHT, fill=HAIRLINE
-            )
+            canvas.create_line(x0 + 10, top + ROW_HEIGHT, x1 - 10, top + ROW_HEIGHT, fill=HAIRLINE)
     return drawn

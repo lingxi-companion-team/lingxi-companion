@@ -28,9 +28,27 @@ v7 蓝白圆角（2026-09-30）
    裁切都需要在同一个坐标系里作画，用控件拼不出来（``Frame`` 没有圆角属性，
    贴边斜线也没法裁）。代价是文字要自己 ``create_text`` 居中，收益是整格可控。
 
-学生端与教师端的结构差异（A2 / §04.2）在这里**只体现为「建不建面板」** ——
-判定「学生不该看到汇总」的是服务端（``hub.build_payload`` 对学生不下发
+两种视图的结构差异（A2 / §04.2）在这里**只体现为「建不建面板」** ——
+判定「谁不该看到汇总」的是服务端（``hub.build_payload`` 按 ``visible_to`` 裁剪
 ``summary`` 键），这里只是不建组件。
+
+⚠️ 本模块的定位（2026-10-02 拍板）
+----------------------------------
+**这不是产品前端，是本地调试外壳。**
+
+需求文档《灵犀学伴产品需求方案》§二.1 要求「**无教师/学生端的产品差异**」，
+而本模块按 ``view`` 建出**两套完全不同的布局**（``dashboard`` 三栏监管视图 /
+``grid`` 共享宫格视图）—— 那是 v7 的形态，**与 §二.1 冲突**。v8 起：
+
+* **产品前端 = :mod:`app.web`（Flet 统一单页）**，所有观看者同一套页面，
+  差别只在「管理台可不可见」（由 payload 的 ``initiator`` 决定，见 §模块二.1）；
+* **本模块 = 调试外壳**，保留的理由只有一个：**零第三方依赖**（纯标准库），
+  在装不上 ``flet`` 的环境（离线机器、CI 无显示环境）里仍能肉眼看一眼链路是否活着。
+
+因此这里的 ``view`` 参数是**调试视图**，不是产品角色 ——
+它的取值 ``dashboard`` / ``grid`` 描述的是「我想看哪种调试视图」，
+与线路上的 ``ParticipantState.role``（``student`` / ``teacher``）是**两回事**。
+新增功能一律加在 :mod:`app.web`，本模块**冻结**。
 """
 
 from __future__ import annotations
@@ -85,9 +103,9 @@ from app.client.theme import (
     STALE_DOT,
     TRANSPARENT_KEY,
 )
-from app.envelope import ROLE_STUDENT, ROLE_TEACHER
 from app.present import (
     DIM_COLOR,
+    HIDDEN_SCOPE_TEXT,
     LABEL_ORDER,
     LABEL_TEXT,
     CardGeometry,
@@ -104,7 +122,19 @@ from app.present import (
     shape_for_key,
 )
 
-__all__ = ["CELL_HEIGHT", "CELL_WIDTH", "ClientWindow"]
+__all__ = ["CELL_HEIGHT", "CELL_WIDTH", "VIEW_DASHBOARD", "VIEW_GRID", "VIEWS", "ClientWindow"]
+
+#: 调试视图：三栏监管视图（左导航 / 中 KPI+图表+表格 / 右筛选面板）。
+VIEW_DASHBOARD = "dashboard"
+
+#: 调试视图：共享宫格视图（宫格 + 图例 + 隐藏开关）。
+VIEW_GRID = "grid"
+
+#: 全部调试视图。⚠️ 这两个值**不是产品角色** —— 见模块 docstring 的「定位」一节。
+VIEWS = (VIEW_DASHBOARD, VIEW_GRID)
+
+#: 调试视图在标题栏 / 状态栏里的中文名。
+_VIEW_TITLES = {VIEW_DASHBOARD: "监管视图", VIEW_GRID: "共享视图"}
 
 #: 快照来源：返回 ``app.hub.build_payload`` 那一套 payload。
 SnapshotProvider = Callable[[], Mapping[str, Any]]
@@ -117,7 +147,7 @@ HiddenReporter = Callable[[str, bool], None]
 CELL_WIDTH = 98
 CELL_HEIGHT = 80
 
-#: 教师端汇总面板宽度（标准档）。同样以 ``present.scale`` 为准。
+#: 监管视图的汇总面板宽度（标准档）。同样以 ``present.scale`` 为准。
 PANEL_WIDTH = 268
 
 #: 汇总条形图的最大宽度（像素）。
@@ -130,9 +160,12 @@ HEADER_HEIGHT = 44
 #: 底部图例条高度。
 LEGEND_HEIGHT = 30
 
-#: 学生端的开关文案 —— 这是**硬要求**（R5）：不把真实可见范围写进文案，
-#: 就构成「误导性的隐私承诺」（学生以为老师也看不到）。
-HIDE_SWITCH_TEXT = "仅对同学隐藏（教师仍可见）"
+#: 公开开关的文案 —— 来自 :mod:`app.present.visibility`（**单一来源**）。
+#:
+#: 不在这里写死的原因：这段文案是**隐私承诺**，必须与 ``visible_to`` 的行为一致，
+#: 且必须被 CI 守住（``app/client/`` 整体 omit 于覆盖率，写在这里等于没人测）。
+#: 名字保留 ``HIDE_SWITCH_TEXT`` 是为了让调用点读起来仍是「那个开关的文案」。
+HIDE_SWITCH_TEXT = HIDDEN_SCOPE_TEXT
 
 #: 卡片斜线纹理的步长（像素）。设计稿 §04.2「已隐藏」：45° 斜线，间距够疏才像
 #: 纹理而不是「划掉」。
@@ -140,13 +173,14 @@ _HATCH_STEP = 9
 
 
 class ClientWindow:
-    """一个参与者的桌面窗口。
+    """一个参与者的**调试外壳**窗口（不是产品界面，见模块 docstring「定位」）。
 
     Args:
         master: 根 ``Tk``（本类自己建 ``Toplevel`` —— D3 要求主界面是独立窗口）。
         provider: 取快照的回调。传 ``hub.snapshot_for`` 的偏函数或一个 HTTP 拉取函数。
         viewer_id: 自己的 ``participant_id``（取快照与上报开关都要带）。
-        role: ``student`` / ``teacher``；决定要不要汇总面板与隐藏开关。
+        view: 调试视图，取值见 :data:`VIEWS`。**不是产品角色** ——
+            ``dashboard`` 建三栏监管视图，``grid`` 建共享宫格视图。
         poll_ms: 轮询间隔（毫秒）。最小 200，避免写错 ``0`` 把界面卡死。
         hidden_reporter: 隐藏开关的上报回调；``None`` 时开关只改本地布尔值。
     """
@@ -157,14 +191,14 @@ class ClientWindow:
         provider: SnapshotProvider,
         *,
         viewer_id: str,
-        role: str = ROLE_STUDENT,
+        view: str = VIEW_GRID,
         poll_ms: int = 1200,
         hidden_reporter: HiddenReporter | None = None,
     ) -> None:
         self._master = master
         self._provider = provider
         self._viewer_id = viewer_id
-        self._role = role
+        self._view = view
         self._poll_ms = max(200, int(poll_ms))
         self._hidden_reporter = hidden_reporter
 
@@ -187,11 +221,9 @@ class ClientWindow:
         self._last_refresh_ms: float | None = None
 
         self.win = tk.Toplevel(master)
-        # 标题随角色变：教师端是「状态监管仪表盘」，学生端是「共享宫格」——
-        # 两者现在是不同的视图，用同一个标题会让人以为看到的还是同一块界面。
-        self.win.title(
-            "灵犀学伴 · 课堂状态看板" if role == ROLE_TEACHER else "灵犀学伴 · 课堂共享宫格"
-        )
+        # 标题带「调试外壳」前缀：这个窗口**不是产品界面**（产品界面在 app.web），
+        # 万一被截图流出去，标题本身就能说明它不是交付物。后缀是当前调试视图。
+        self.win.title(f"灵犀学伴 · 调试外壳 · {_VIEW_TITLES.get(view, view)}")
         self.win.configure(bg=BG)
         self.win.protocol("WM_DELETE_WINDOW", self.quit_app)
 
@@ -230,7 +262,7 @@ class ClientWindow:
 
         # ── 顶栏 ──
         # 左右**分成两个容器**，不再往同一条 pack 链上堆。
-        # 起因（实机截图）：学生端有「仅对同学隐藏（教师仍可见）」这一长句复选框，
+        # 起因（实机截图）：共享视图有「不向房间公开我的状态（仅本人可见）」这一长句复选框，
         # R5 要求文案不得简写，于是它与标题、状态、最小化四者挤在同一行 44px 里。
         # Tk 的 pack 不换行，左右两侧请求宽度相加大于窗口时就相互重叠 —— 标题被
         # 复选框盖住。现在左边只放品牌与身份，右边只放操作，两者互不侵占：
@@ -258,7 +290,7 @@ class ClientWindow:
             font=FONT_BODY,
             cursor="hand2",
         ).pack(side="right")
-        if self._role != ROLE_TEACHER:
+        if self._view != VIEW_DASHBOARD:
             # R5：文案不得简写 —— 不写清可见范围就是误导性的隐私承诺。
             tk.Checkbutton(
                 actions,
@@ -291,11 +323,7 @@ class ClientWindow:
         title_group.pack(side="left")
         tk.Label(
             title_group,
-            text=(
-                "灵犀学伴 · 课堂状态看板"
-                if self._role == ROLE_TEACHER
-                else "灵犀学伴 · 课堂共享宫格"
-            ),
+            text=f"灵犀学伴 · 调试外壳 · {_VIEW_TITLES.get(self._view, self._view)}",
             bg=HEADER_BG,
             fg=INK_HI,
             font=FONT_TITLE_LG,
@@ -305,24 +333,24 @@ class ClientWindow:
         )
         self._status_label.pack(side="left", padx=(SPACING_MD, 0))
 
-        # ── 主体：教师端 = 三栏仪表盘；学生端 = 共享宫格 + 图例 ──
+        # ── 主体：监管视图 = 三栏仪表盘；共享视图 = 宫格 + 图例 ──
         #
-        # v7（2026-10-01）：教师视角从「宫格 + 汇总面板」升级为**三栏仪表盘**
+        # v7（2026-10-01）：监管视图从「宫格 + 汇总面板」升级为**三栏仪表盘**
         # （左导航 / 中 KPI+图表+表格 / 右筛选面板），决策 ①②③④⑥ 的落点。
-        # 学生视角保持不变 —— 它本来就是「共享宫格」这个语义，不需要监管面板；
-        # 而且服务端对学生**根本不下发** ``summary``（A2），建了也没数据。
+        # 共享视图保持不变 —— 它本来就是「共享宫格」这个语义，不需要监管面板；
+        # 而且本视图不建那块面板（v8 起 ``summary`` 已对所有人下发，是这里不用）。
         body = tk.Frame(self._expanded_frame, bg=BG, padx=SPACING_XL, pady=SPACING_XL)
         body.pack(fill="both", expand=True)
 
         self._dashboard: DashboardView | None = None
-        # 这两个控件只在**学生端**建（教师端走 ``_dashboard`` 分支）。这里用纯注解
-        # 声明类型、不预先造空控件 —— 教师端若误用会立刻 AttributeError，
+        # 这两个控件只在**共享视图**建（监管视图走 ``_dashboard`` 分支）。这里用纯注解
+        # 声明类型、不预先造空控件 —— 监管视图若误用会立刻 AttributeError，
         # 比「悄悄操作一个没 pack 的空 Frame」更容易发现。
         self._grid_frame: tk.Frame
         self._legend_frame: tk.Frame
         self._panel_canvas: tk.Canvas | None = None
 
-        if self._role == ROLE_TEACHER:
+        if self._view == VIEW_DASHBOARD:
             self._dashboard = DashboardView(body, viewer_id=self._viewer_id)
             self._dashboard.pack(fill="both", expand=True)
             return
@@ -357,7 +385,7 @@ class ClientWindow:
         是必读项，任何宽度下都保留。
         """
         if self._dashboard is not None:
-            # 教师端没有宫格，也就没有图例 —— 空操作而不是不定义：
+            # 监管视图没有宫格，也就没有图例 —— 空操作而不是不定义：
             # ``_on_resize`` 与测试都按「可以无参调用」使用它。
             return
         for child in self._legend_frame.winfo_children():
@@ -470,7 +498,7 @@ class ClientWindow:
         self._offline = False
         self._sync_hidden_switch()
         self._status_label.configure(bg=HEADER_BG)
-        self._status.set(f"{self._viewer_id} · {self._role_label()}")
+        self._status.set(f"{self._viewer_id} · {self._view_label()}")
         self._render()
         if self._changed_ids:
             # 高亮只亮一拍（200ms 后清空重画），别让它常亮 —— 那是「有过变化」，
@@ -515,8 +543,9 @@ class ClientWindow:
         self.refresh()
         self._schedule_poll()
 
-    def _role_label(self) -> str:
-        return "教师" if self._role == ROLE_TEACHER else "学生"
+    def _view_label(self) -> str:
+        """状态栏里的视图名。⚠️ 是**调试视图**，不是产品角色（见模块 docstring）。"""
+        return _VIEW_TITLES.get(self._view, self._view)
 
     def _sync_hidden_switch(self) -> None:
         """按服务端的权威值回填开关 —— 否则多端同时操作时，界面会与事实不一致。"""
@@ -619,7 +648,7 @@ class ClientWindow:
     # ── 右键菜单与退出（R2）───────────────────────────────────────────────
 
     def _popup_menu(self, event: Any) -> None:
-        is_teacher = self._role == ROLE_TEACHER
+        is_teacher = self._view == VIEW_DASHBOARD
         self._menu = build_context_menu(
             self.win,
             minimized=self._minimized,
@@ -697,7 +726,7 @@ class ClientWindow:
         # 内容所需的最小宽度：宫格（按方阵算）+ 面板 + 全部留白。
         columns_ideal = columns_for(len(cells))
         grid_min = columns_ideal * (geo.width + geo.gap) + SPACING_XL * 2
-        if self._role == ROLE_TEACHER:
+        if self._view == VIEW_DASHBOARD:
             grid_min += geo.panel_width + SPACING_XL
         # ``max`` 而非直接 ``geometry(...)``：用户把窗口拖大过这个下界时不该被缩回来。
         if measured <= 1:
@@ -707,7 +736,7 @@ class ClientWindow:
         self.win.minsize(grid_min, 1)
 
         available = content_width - SPACING_XL * 2
-        if self._role == ROLE_TEACHER:
+        if self._view == VIEW_DASHBOARD:
             available -= geo.panel_width + SPACING_XL
         columns = min(columns_for(len(cells)), columns_at(available, gap=geo.gap))
         for index, cell in enumerate(cells):
@@ -719,9 +748,9 @@ class ClientWindow:
                 pady=geo.gap // 2,
             )
 
-        if self._role == ROLE_TEACHER:
+        if self._view == VIEW_DASHBOARD:
             self._render_summary(geo)
-        # A2：学生端连汇总**组件**都不建 —— 服务端也没下发 ``summary``。
+        # 共享视图连汇总**组件**都不建 —— 它是宫格语义，不需要监管面板。
 
         if self._autosize_pending:
             self._autosize_pending = False
@@ -730,12 +759,12 @@ class ClientWindow:
             # 超出屏幕，反而不如按最小下界给。
             self.win.geometry(f"{content_width}x{self._content_height(cells, columns, geo)}")
 
-    #: 教师端仪表盘的初始尺寸。取 1440×860：设计稿按 1440 宽画，
+    #: 监管视图仪表盘的初始尺寸。取 1440×860：设计稿按 1440 宽画，
     #: 且 1440 落在 ``present.layout`` 的「三栏全开」档（≥1280）。
     _DASHBOARD_DEFAULT = (1440, 860)
 
     def _render_dashboard(self) -> None:
-        """教师端：把 payload 交给三栏仪表盘。
+        """监管视图：把 payload 交给三栏仪表盘。
 
         尺寸分档（1280/1120/960/800）由 ``present.layout`` 在 ``DashboardView``
         内部按自身宽度算，这里只管「给多少宽高」。首次显示时显式给一个默认尺寸 ——
@@ -773,8 +802,8 @@ class ClientWindow:
         # 每格 grid 的 pady=gap//2 两侧都要算，所以是 (height + gap)。
         grid_h = rows * (geo.height + geo.gap)
         chrome = HEADER_HEIGHT + SPACING_XL * 2 + LEGEND_HEIGHT + SPACING_LG
-        # 教师端的面板可能比宫格高（尤其展开诊断），取两者之大。
-        if self._role == ROLE_TEACHER:
+        # 监管视图的面板可能比宫格高（尤其展开诊断），取两者之大。
+        if self._view == VIEW_DASHBOARD:
             panel_h = self._panel_canvas_height()
             grid_h = max(grid_h, panel_h)
         # 屏幕高度兜底：小屏笔记本上宁可让底栏被挤，也不要窗口高到超出屏幕
@@ -983,7 +1012,7 @@ class ClientWindow:
             canvas.create_line(x0, y0, x1, y1, fill=HIDDEN_HATCH, width=1)
 
     def _render_summary(self, geo: CardGeometry) -> None:
-        """教师端汇总面板：4 行状态分布 + 圆头占比条（D1 分量 / D2 分母）。
+        """汇总面板：4 行状态分布 + 圆头占比条（D1 分量 / D2 分母）。
 
         面板整块画在一张 Canvas 上（圆角容器 + 圆头占比条都要样条），所以这里
         不是「搭控件」而是「按坐标画」。坐标从一个游标 ``y`` 往下推，改版时只动
@@ -1156,7 +1185,7 @@ class ClientWindow:
             )
 
     def _icon_color(self) -> str:
-        if self._role == ROLE_TEACHER:
+        if self._view == VIEW_DASHBOARD:
             return BRAND
         components = self._payload.get("bubble") or []
         return str(components[0].get("color", BRAND)) if components else HIDDEN_FG
@@ -1173,18 +1202,16 @@ class ClientWindow:
         self.win.update()
         stats: dict[str, Any] = {
             "viewer": self._viewer_id,
-            "role": self._role,
-            "grid_cells": len(self._grid_frame.winfo_children())
-            if self._dashboard is None
-            else 0,
+            "view": self._view,
+            "grid_cells": len(self._grid_frame.winfo_children()) if self._dashboard is None else 0,
             "bubble_components": len(self._payload.get("bubble") or []),
             "has_summary": "summary" in self._payload,
-            "hidden_switch_visible": self._role != ROLE_TEACHER,
+            "hidden_switch_visible": self._view != VIEW_DASHBOARD,
             "transparent_supported": False,
             "global_hotkey": self._hotkey.is_global,
         }
         if self._dashboard is not None:
-            # 教师端：宫格不适用，改报仪表盘画出的图元数 —— 仍然是「真的画了东西」
+            # 监管视图：宫格不适用，改报仪表盘画出的图元数 —— 仍然是「真的画了东西」
             # 这条冒烟判据（``__main__`` 用 ``grid_cells`` 的真假决定退出码）。
             self._dashboard.render()
             self.win.update()

@@ -94,12 +94,8 @@ class DashboardView(tk.Frame):
         self._note = ""
         self._trend = TrendBuffer()
 
-        self._sidebar_canvas = tk.Canvas(
-            self, bg=BG, highlightthickness=0, bd=0
-        )
-        self._main_canvas = tk.Canvas(
-            self, bg=BG, highlightthickness=0, bd=0
-        )
+        self._sidebar_canvas = tk.Canvas(self, bg=BG, highlightthickness=0, bd=0)
+        self._main_canvas = tk.Canvas(self, bg=BG, highlightthickness=0, bd=0)
         self._inspector = InspectorPanel(self, on_change=self._on_filter_change)
         self._inspector.pack_forget()
 
@@ -244,9 +240,7 @@ class DashboardView(tk.Frame):
 
         y = _PAD
         # 标题行
-        canvas.create_text(
-            _PAD, y + 8, text="实时看板", anchor="w", fill=INK, font=FONT_TITLE
-        )
+        canvas.create_text(_PAD, y + 8, text="实时看板", anchor="w", fill=INK, font=FONT_TITLE)
         online = int(summary.get("online_count", 0)) if isinstance(summary, Mapping) else 0
         canvas.create_text(
             _PAD + 80,
@@ -301,16 +295,10 @@ class DashboardView(tk.Frame):
         donut_cx = x0 + 96
         donut_cy = y0 + height / 2 + 8
         segments = [(card.ratio, card.color) for card in cards]
-        charts.draw_donut(
-            canvas, donut_cx, donut_cy, 62, 20, segments, track=HAIRLINE
-        )
+        charts.draw_donut(canvas, donut_cx, donut_cy, 62, 20, segments, track=HAIRLINE)
         online = int(summary.get("online_count", 0)) if isinstance(summary, Mapping) else 0
-        canvas.create_text(
-            donut_cx, donut_cy - 6, text=str(online), fill=INK, font=FONT_TITLE
-        )
-        canvas.create_text(
-            donut_cx, donut_cy + 14, text="在线", fill=MICRO, font=FONT_CAPTION
-        )
+        canvas.create_text(donut_cx, donut_cy - 6, text=str(online), fill=INK, font=FONT_TITLE)
+        canvas.create_text(donut_cx, donut_cy + 14, text="在线", fill=MICRO, font=FONT_CAPTION)
 
         # 图例：分量名 + 人数
         legend_x = x0 + 200
@@ -354,9 +342,7 @@ class DashboardView(tk.Frame):
         self, canvas: tk.Canvas, x0: float, y0: float, width: float, height: float
     ) -> None:
         rows = self._filtered_rows()
-        table_draw.draw_table(
-            canvas, rows, x0, y0, width, height, hover_index=self._hover_row
-        )
+        table_draw.draw_table(canvas, rows, x0, y0, width, height, hover_index=self._hover_row)
 
     def _filtered_rows(self) -> list[Any]:
         """按右面板当前的筛选条件取行 —— 规则全在 ``present.roster``。"""

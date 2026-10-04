@@ -25,6 +25,7 @@ from app.client.theme import (
     INK_2,
     INK_3,
     PANEL_BG,
+    RADIUS_LG,
     RADIUS_SM,
 )
 
@@ -70,7 +71,9 @@ def draw_sidebar(
     ``mode`` 为 ``icons`` 时只画每项的**首字**（如 实 / 趋 / 名 / 设）并居中 ——
     窄栏（72px）下再画全称会被右缘切掉，截断的文字比不显示更糟。
     """
-    rounded.draw_rounded_rect(canvas, x0, y0, x0 + width, y0 + height, RADIUS_SM, fill=PANEL_BG)
+    # 面板底用 **RADIUS_LG（20）**：与右面板、中栏两张卡、以及学生端汇总面板同档 ——
+    # 「大面板 = 20px 圆角」是全局一致的一条规则（见 theme 的圆角分档说明）。
+    rounded.draw_rounded_rect(canvas, x0, y0, x0 + width, y0 + height, RADIUS_LG, fill=PANEL_BG)
     icons_mode = mode == NAV_MODE_ICONS
     for index, label in enumerate(labels):
         top = y0 + _TOP_PAD + index * NAV_ITEM_HEIGHT
@@ -86,7 +89,7 @@ def draw_sidebar(
                 top + 4,
                 x0 + width - inset,
                 top + NAV_ITEM_HEIGHT - 4,
-                RADIUS_SM - 2,
+                RADIUS_SM,
                 fill=BRAND_SUBTLE if is_active else PANEL_BG,
             )
         text_color = INK if is_active else (INK_2 if hover_index == index else INK_3)

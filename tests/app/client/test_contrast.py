@@ -14,7 +14,7 @@
 的六个关键令牌里有五个不达标 —— 状态色 ``#4361EE``/``#7C5CE0``/``#64748B`` 作为文字色
 压画布分别只有 4.34/4.07/4.12，外壳 ``#F0F6FF`` 会让表面层次掉到 1.086。
 最终**表面三档保持原值、状态色压暗 2~9%、品牌色换 Finserv 主色**，
-详见 ``不推送/技术方案/v7-实施决策记录-2026-10-01.md``。
+详见团队内部的 v7 实施决策记录（不入库）。
 
 门槛取值的依据
 --------------
@@ -35,7 +35,13 @@ import re
 import pytest
 
 from app.client import theme
-from app.present.colors import CLOSED_COLOR, DIM_COLOR, STATE_COLORS
+from app.present.colors import (
+    CLOSED_COLOR,
+    DIM_COLOR,
+    STATE_COLORS,
+    STATE_FILLS,
+    on_fill,
+)
 from common.perception_types import EmotionLabel
 
 __all__ = []
@@ -262,3 +268,147 @@ def test_online_dot_clears_the_graphic_threshold() -> None:
     """在线点是小圆点，图形元素，按 3:1 验。"""
     assert contrast(theme.ONLINE_DOT, CARD) >= GRAPHIC_MIN
     assert contrast(theme.ONLINE_DOT, CANVAS) >= GRAPHIC_MIN
+
+
+# ── v8：色标签的 fill 通道 + 文档规定的色相语义 ────────────────────────────
+
+
+def _rgb(color: str) -> tuple[int, int, int]:
+    raw = color.lstrip("#")
+    return (
+        int(raw[0:2], 16),
+        int(raw[2:4], 16),
+        int(raw[4:6], 16),
+    )
+
+
+@pytest.mark.parametrize("label", list(EmotionLabel))
+def test_fill_channel_is_perceivable_on_a_white_card(label: EmotionLabel) -> None:
+    """色标签（``STATE_FILLS``）是**图形元素**，按 WCAG 1.4.11 要 3:1。
+
+    但**黄的 fill 物理上做不到**（``#f2c200`` 只有 1.68:1 —— 纯黄就是亮的）。
+    需求文档要的是「能被认出的黄」，把黄压暗到 3:1 就变成橄榄色，语义就丢了。
+
+    所以规则是**二选一**：要么填色自己过 3:1，要么它必须配一条过 3:1 的 ink 描边
+    （由 ``on_fill`` / ``color_for`` 提供）。这条测试把「不能两个都没有」钉死 ——
+    若哪天有人把 fill 换成更淡的值、又去掉了描边，这里立刻红。
+    """
+    fill = STATE_FILLS[label]
+    ink = STATE_COLORS[label]
+    fill_ratio = contrast(fill, CARD)
+    border_ratio = contrast(ink, CARD)
+    assert fill_ratio >= GRAPHIC_MIN or border_ratio >= GRAPHIC_MIN, (
+        f"{label.value} 的标签既没有 3:1 的填色（{fill_ratio:.2f}）"
+        f"也没有 3:1 的描边（{border_ratio:.2f}）—— 在白卡上会看不见边界"
+    )
+
+
+def test_only_the_yellow_fill_needs_its_border() -> None:
+    """钉住「谁需要描边」这个事实，防止有人为了整齐给四个都加粗描边。
+
+    四个 fill 里**只有** ``confused``（黄）过不了 3:1。其余三个自带边界。
+    这条测试的作用是让「为什么黄的标签看起来多一圈」有据可查 ——
+    那是可达性要求，不是设计风格。
+    """
+    below = [label for label, fill in STATE_FILLS.items() if contrast(fill, CARD) < GRAPHIC_MIN]
+    assert below == [EmotionLabel.CONFUSED]
+
+
+@pytest.mark.parametrize("label", list(EmotionLabel))
+def test_fill_carries_a_readable_foreground(label: EmotionLabel) -> None:
+    """色标签里的文字（由 ``on_fill`` 选）必须 ≥4.5:1 —— 否则标签只是个色块。"""
+    fill = STATE_FILLS[label]
+    foreground = on_fill(fill)
+    ratio = contrast(foreground, fill)
+    assert ratio >= TEXT_MIN, f"{label.value} fill {fill} 上 {foreground} 只有 {ratio:.2f}:1"
+
+
+def test_fill_and_ink_are_distinguishable_from_each_other() -> None:
+    """fill 与 ink 必须是两个**看得出差别**的值。
+
+    相等意味着有人把「压暗到 4.5 的色」直接当标签底用了：那时 ``on_fill``
+    会选白字，对比度只有 5 左右（勉强够），但**色相饱和度全丢了** ——
+    文档要的「一眼认出的绿黄红」就不成立。
+    """
+    for label in EmotionLabel:
+        assert contrast(STATE_FILLS[label], STATE_COLORS[label]) >= 1.15, (
+            f"{label.value} 的 fill 与 ink 太接近，色标签与文字会糊在一起"
+        )
+
+
+# ── 文档规定的色相语义：绿=专注 / 黄=困惑 / 红=分心 / 灰=不确定 ──────────────
+#
+# 这组断言把需求文档 §模块二.3 的那句话变成可执行的检查。此前「四色语义」
+# 只活在注释里 —— 有人把 confused 改成蓝色，没有任何测试会红。
+# 判据用**通道大小关系**而不是具体 hex：既约束了色相，又不妨碍调明暗。
+
+
+def test_focused_is_green() -> None:
+    """绿 = 专注：绿通道最强。"""
+    red, green, blue = _rgb(STATE_FILLS[EmotionLabel.FOCUSED])
+    assert green > red and green > blue, f"focused 不是绿调：{STATE_FILLS[EmotionLabel.FOCUSED]}"
+
+
+def test_confused_is_yellow() -> None:
+    """黄 = 困惑：红绿都强、蓝很弱（黄 = R+G），且红绿接近。"""
+    red, green, blue = _rgb(STATE_FILLS[EmotionLabel.CONFUSED])
+    assert red > blue and green > blue, "confused 不是黄调：蓝通道应明显最弱"
+    assert abs(red - green) <= 80, "红绿差太大就不是黄而是橙/绿了"
+
+
+def test_distracted_is_red() -> None:
+    """红 = 分心：红通道最强。"""
+    red, green, blue = _rgb(STATE_FILLS[EmotionLabel.DISTRACTED])
+    assert red > green and red > blue, (
+        f"distracted 不是红调：{STATE_FILLS[EmotionLabel.DISTRACTED]}"
+    )
+
+
+def test_unknown_is_grey() -> None:
+    """灰 = 不确定：三通道接近（彩度低）。"""
+    red, green, blue = _rgb(STATE_FILLS[EmotionLabel.UNKNOWN])
+    assert max(red, green, blue) - min(red, green, blue) <= 40, (
+        f"unknown 不够灰：{STATE_FILLS[EmotionLabel.UNKNOWN]}"
+    )
+
+
+def test_the_four_state_fills_have_distinct_hues() -> None:
+    """四个 fill 两两必须**分得开** —— 否则「按颜色分类」这件事就失效了。
+
+    判据**不能**用对比度（亮度比）：绿 ``#2ea44f`` 与灰 ``#8a94a6`` 亮度几乎相同
+    （对比 1.05），但一个是饱和绿、一个是无彩灰，正常人一眼就能分开。
+    亮度比在这里会给出「分不开」的错误结论。
+
+    所以改用两个与色相/彩度有关的量，满足其一即可：
+    **色相角相差 ≥30°**，或**彩度（max−min 通道差）相差 ≥0.2**。
+    绿 vs 灰走第二条（彩度 0.463 vs 0.110），绿 vs 红走第一条（137° vs 354°）。
+    """
+    labels = list(EmotionLabel)
+
+    def hue(rgb: tuple[int, int, int]) -> float:
+        red, green, blue = (value / 255.0 for value in rgb)
+        high, low = max(red, green, blue), min(red, green, blue)
+        if high == low:
+            return 0.0
+        delta = high - low
+        if high == red:
+            base = ((green - blue) / delta) % 6
+        elif high == green:
+            base = (blue - red) / delta + 2
+        else:
+            base = (red - green) / delta + 4
+        return base * 60.0
+
+    def chroma(rgb: tuple[int, int, int]) -> float:
+        return (max(rgb) - min(rgb)) / 255.0
+
+    for index, first in enumerate(labels):
+        for second in labels[index + 1 :]:
+            first_rgb, second_rgb = _rgb(STATE_FILLS[first]), _rgb(STATE_FILLS[second])
+            raw = abs(hue(first_rgb) - hue(second_rgb))
+            hue_gap = min(raw, 360.0 - raw)
+            chroma_gap = abs(chroma(first_rgb) - chroma(second_rgb))
+            assert hue_gap >= 30.0 or chroma_gap >= 0.2, (
+                f"{first.value} 与 {second.value} 的标签色分不开："
+                f"色相相差 {hue_gap:.1f}°、彩度相差 {chroma_gap:.2f}"
+            )

@@ -33,7 +33,7 @@ v7 三栏仪表盘的设计稿是 Finserv 蓝白风，但它的**表面令牌不
 - **品牌色换成 Finserv 的 ``#4361EE``**（它是底色，白字压它 5.02 ✓，可原样采用）；
 - Finserv 观感改由「品牌蓝 + 大圆角 + 偏移暗块阴影」承担。
 
-细节见 ``不推送/技术方案/v7-实施决策记录-2026-10-01.md`` §二。
+细节见团队内部的 v7 实施决策记录（不入库）。
 
 圆角为什么能到 16px 而以前只有 6px
 ----------------------------------
@@ -44,6 +44,8 @@ v7 因此把圆角整体放大到 8~28px，这既是视觉选择，也正好落�
 """
 
 from __future__ import annotations
+
+import sys
 
 __all__ = [
     "BRAND",
@@ -58,6 +60,7 @@ __all__ = [
     "CELL_WIDTH",
     "FONT_BOLD",
     "FONT_BODY",
+    "FONT_CANDIDATES",
     "FONT_CAPTION",
     "FONT_FAMILY",
     "FONT_FAMILY_MONO",
@@ -220,6 +223,17 @@ SPACING_XL = 12
 #: - ``LG`` 汇总面板 / 气泡 / 控制栏
 #: - ``XL`` 最小化气泡（唯一的超大圆角，作为「胆量花在一处」的那个元素）
 #: - ``FULL`` 胶囊 / 正圆（值取足够大即可，Tk 会按短边夹紧）
+#:
+#: **卡片圆角分档（2026-10-01 统一）** —— 「每一块卡片都圆角」要成立，光给每张卡
+#: 一个圆角还不够，得让**同层级的卡半径一致**，否则摞在一起会「一深一浅」：
+#:
+#: - ``LG``（20）= **大容器**：左导航面板、右筛选面板、中栏「状态分布」卡、
+#:   中栏「成员明细」表卡、学生端「课堂汇总」面板；
+#: - ``MD``（16）= **中等卡片**：中栏 KPI 卡；
+#: - ``SM``（12）= **卡内元素**：表格行 hover 高亮、导航项高亮；
+#: - ``XS``（8）= **最小元素**：表格里的状态胶囊、图例小色块。
+#:
+#: 改任何一处卡片圆角时，先看它属于哪一档，再回头核对同档的其它卡是否一致。
 RADIUS_XS = 8
 RADIUS_SM = 12
 RADIUS_MD = 16
@@ -261,12 +275,50 @@ MINIMIZED_MARGIN = 36
 TRANSPARENT_KEY = "#ff00fe"
 
 # ── 字体 ───────────────────────────────────────────────────────────────
-#: 中文字体族。**回退链**写在名字里（Tk 的 font family 支持逗号分隔的候选列表，
-#: 会取第一个可用的）。教室机器不一定装得起完整字体集，所以必须给回退。
-FONT_FAMILY = "HarmonyOS Sans SC, Noto Sans SC, Microsoft YaHei UI"
-#: 等宽数字族。汇总面板的人数与百分比用它 —— 比例数字变宽变窄会让整列左右抖动，
-#: 而这一列恰好在每次轮询时都会重画。
-FONT_FAMILY_MONO = "Cascadia Mono, Consolas"
+#: ⚠️ **Tk 不支持逗号分隔的字体回退链** —— 这是 2026-10-01 实测纠正的一个真 bug。
+#:
+#: 本项目曾把 ``FONT_FAMILY`` 写成 ``"HarmonyOS Sans SC, Noto Sans SC, Microsoft YaHei UI"``，
+#: 并在注释里断言「Tk 的 family 支持逗号分隔的候选列表，会取第一个可用的」。
+#: **那个断言是错的**：Tk 把整串当作**一个**族名，匹配失败后静默退回默认字体。
+#: 实测（``tkinter.font.Font.actual('family')``）::
+#:
+#:     请求 'HarmonyOS Sans SC, Noto Sans SC, Microsoft YaHei UI' -> 实际 '宋体'
+#:     请求 'HarmonyOS Sans SC'                                   -> 实际 'HarmonyOS Sans SC'
+#:     请求 'Microsoft YaHei UI'                                  -> 实际 'Microsoft YaHei UI'
+#:
+#: 也就是说，界面上**每一个字**（含状态名、数字）都掉进了宋体 —— 宋体在小字号下
+#: 笔画发虚，这正是「字体显得模糊」的直接原因之一。
+#:
+#: 现在的做法：**按平台给一个单一名族**，且必须是该平台**必然存在**的那个。
+#: 不做运行时探测（那需要 ``tkfont.families()``，即需要 Tk root；而本模块被
+#: 设计成「纯数据、不调用任何 Tkinter API」，CI 里也跑得到）。用「必然存在」换
+#: 「可能更好看」是划算的：教室机器不一定装得起 HarmonyOS Sans SC，
+#: 但 微软雅黑 UI 是 Windows 自带。
+#:
+#: ``test_fonts.py`` 钉住「不得含逗号」这条 —— 防止这个 bug 再回来。
+if sys.platform == "win32":
+    # Windows 自带（Vista+），ClearType 渲染清晰，CJK 覆盖完整。
+    FONT_FAMILY = "Microsoft YaHei UI"
+    FONT_FAMILY_MONO = "Consolas"
+elif sys.platform == "darwin":
+    FONT_FAMILY = "PingFang SC"
+    FONT_FAMILY_MONO = "Menlo"
+else:
+    FONT_FAMILY = "Noto Sans SC"
+    FONT_FAMILY_MONO = "DejaVu Sans Mono"
+
+#: 字族候选表（**仅供人工参考 / 未来若做运行时探测时使用**）。
+#: 顺序即偏好顺序，但当前**不参与**解析 —— 见 ``FONT_FAMILY`` 的说明。
+FONT_CANDIDATES: tuple[str, ...] = (
+    "HarmonyOS Sans SC",
+    "Noto Sans SC",
+    "Microsoft YaHei UI",
+    "PingFang SC",
+)
+
+#: 等宽数字族（``FONT_FAMILY_MONO``）在平台分支里已定义：汇总面板的人数与百分比用它 ——
+#: 比例数字变宽变窄会让整列左右抖动，而这一列恰好在每次轮询时都会重画。
+#: （同样必须是单一名族，理由见上。）
 
 FONT_TITLE_LG = (FONT_FAMILY, 13, "bold")
 FONT_TITLE = (FONT_FAMILY, 11, "bold")

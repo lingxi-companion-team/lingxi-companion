@@ -13,6 +13,17 @@
 这些等于重造一个输入控件，成本高且易错。所以只有 Tab 条是 Canvas（它纯装饰），
 其余交给 Tk 原生控件 —— 这也是方案 §2 对「少量原生控件」的界定。
 
+面板为什么是 Canvas 而不是 Frame（2026-10-01）
+----------------------------------------------
+Tk 的 ``Frame`` 画不出圆角，于是这块右面板此前是**方角**的 —— 而左导航、中栏两张卡、
+学生端汇总面板全是圆角，唯独它是直角，一眼就看得出「漏了」。
+
+做法：本控件改成 ``tk.Canvas``，在 ``<Configure>`` 时画一块 ``RADIUS_LG`` 的圆角底，
+再把一个**内缩 8px** 的 ``PANEL_BG`` 子 Frame（``self._body``）用 ``create_window``
+嵌进去承载原生控件。内缩量 8 ≥ ``RADIUS_LG·(1−1/√2) ≈ 5.86``，所以子 Frame 的直角
+落在圆角弧**之内**，不会戳出去；而两者同为 ``PANEL_BG``，接缝不可见 ——
+最终看到的就只是一块圆角面板。
+
 判定（筛哪些行、非法键怎么办）**不在**本模块 —— 在 ``present.roster``，有测试。
 这里只负责「收集用户选了哪个键、输入了什么词」并回调出去。
 """
@@ -22,7 +33,9 @@ from __future__ import annotations
 import tkinter as tk
 from collections.abc import Callable
 
+from app.client import rounded
 from app.client.theme import (
+    BG,
     BRAND,
     BRAND_SUBTLE,
     CARD_BG,
@@ -35,6 +48,7 @@ from app.client.theme import (
     INK_3,
     MICRO,
     PANEL_BG,
+    RADIUS_LG,
     SPACING_LG,
     SPACING_MD,
     SPACING_SM,
@@ -50,9 +64,13 @@ ALL_FILTER = "all"
 #: 顶部 Tab（只有第一个是真页面，其余装饰）。
 _TABS = ("查询", "图表", "标注")
 
+#: 内层承载区相对圆角面板的内缩（像素）。必须 ≥ ``RADIUS_LG·(1−1/√2)``，
+#: 否则内层 Frame 的直角会戳出圆角弧（见模块 docstring）。
+_PANEL_PAD = 8
 
-class InspectorPanel(tk.Frame):
-    """右面板。构造后即是一块可用的筛选器。
+
+class InspectorPanel(tk.Canvas):
+    """右面板。构造后即是一块可用的筛选器，且自带圆角面板底。
 
     Args:
         master: 父容器。
@@ -68,9 +86,18 @@ class InspectorPanel(tk.Frame):
         on_change: Callable[[str, str], None],
         width: int = 320,
     ) -> None:
-        super().__init__(master, bg=PANEL_BG, width=width)
-        self.pack_propagate(False)
+        # 画布底色 = 画布色：圆角之外的那点区域要露出画布，圆角才看得出来。
+        super().__init__(master, bg=BG, width=width, highlightthickness=0, bd=0)
         self._on_change = on_change
+        # 内层承载区：原生控件都 pack 到它上面（而不是画布本身）。
+        self._body = tk.Frame(self, bg=PANEL_BG)
+        self._body.pack_propagate(False)
+        self._body_window = self.create_window(
+            _PANEL_PAD, _PANEL_PAD, window=self._body, anchor="nw"
+        )
+        self._panel_size: tuple[int, int] = (0, 0)
+        self.bind("<Configure>", self._on_configure)
+
         self._label_var = tk.StringVar(master=self, value=ALL_FILTER)
         self._query_var = tk.StringVar(master=self)
         self._query_var.trace_add("write", lambda *_: self._emit())
@@ -79,6 +106,27 @@ class InspectorPanel(tk.Frame):
         self._build_filter()
         self._build_search()
         self._build_reset()
+
+    # ── 圆角面板底 ────────────────────────────────────────────────────────
+
+    def _on_configure(self, event: tk.Event) -> None:
+        """按当前尺寸重画圆角底并同步内层承载区大小。"""
+        if event.widget is not self:
+            return
+        width, height = int(event.width), int(event.height)
+        if (width, height) == self._panel_size:
+            return
+        self._panel_size = (width, height)
+        self.delete("panel")
+        rounded.draw_rounded_rect(self, 0, 0, width, height, RADIUS_LG, fill=PANEL_BG, tags="panel")
+        # 圆角底必须在窗口项**之下**，否则会盖住原生控件。
+        self.tag_lower("panel")
+        self.coords(self._body_window, _PANEL_PAD, _PANEL_PAD)
+        self.itemconfigure(
+            self._body_window,
+            width=max(1, width - _PANEL_PAD * 2),
+            height=max(1, height - _PANEL_PAD * 2),
+        )
 
     # ── 对外 ──────────────────────────────────────────────────────────────
 
@@ -98,7 +146,7 @@ class InspectorPanel(tk.Frame):
 
     def _build_tabs(self) -> None:
         """顶部 Tab 条 —— 用 Canvas 画（纯装饰，点击不切页）。"""
-        strip = tk.Canvas(self, height=40, bg=PANEL_BG, highlightthickness=0, bd=0)
+        strip = tk.Canvas(self._body, height=40, bg=PANEL_BG, highlightthickness=0, bd=0)
         strip.pack(fill="x", padx=SPACING_XL, pady=(SPACING_XL, SPACING_MD))
         strip.bind("<Configure>", lambda event: self._draw_tabs(strip, event.width))
         self._tab_canvas = strip
@@ -126,7 +174,7 @@ class InspectorPanel(tk.Frame):
     def _build_filter(self) -> None:
         """状态筛选：一组单选。键与 ``present`` 完全一致，不在这里硬编码字符串。"""
         tk.Label(
-            self, text="按状态筛选", bg=PANEL_BG, fg=INK, font=FONT_LABEL, anchor="w"
+            self._body, text="按状态筛选", bg=PANEL_BG, fg=INK, font=FONT_LABEL, anchor="w"
         ).pack(fill="x", padx=SPACING_XL, pady=(SPACING_LG, SPACING_SM))
 
         options: list[tuple[str, str]] = [(ALL_FILTER, "全部")]
@@ -135,7 +183,7 @@ class InspectorPanel(tk.Frame):
 
         for key, text in options:
             tk.Radiobutton(
-                self,
+                self._body,
                 text=text,
                 value=key,
                 variable=self._label_var,
@@ -154,10 +202,10 @@ class InspectorPanel(tk.Frame):
 
     def _build_search(self) -> None:
         tk.Label(
-            self, text="按编号搜索", bg=PANEL_BG, fg=INK, font=FONT_LABEL, anchor="w"
+            self._body, text="按编号搜索", bg=PANEL_BG, fg=INK, font=FONT_LABEL, anchor="w"
         ).pack(fill="x", padx=SPACING_XL, pady=(SPACING_LG, SPACING_SM))
         entry = tk.Entry(
-            self,
+            self._body,
             textvariable=self._query_var,
             bg=CARD_BG,
             fg=INK,
@@ -172,7 +220,7 @@ class InspectorPanel(tk.Frame):
 
     def _build_reset(self) -> None:
         tk.Button(
-            self,
+            self._body,
             text="重置筛选",
             command=self.reset,
             relief="flat",
@@ -187,7 +235,7 @@ class InspectorPanel(tk.Frame):
         ).pack(fill="x", padx=SPACING_XL, pady=(SPACING_LG, SPACING_MD))
 
         tk.Label(
-            self,
+            self._body,
             text="（Tab 与指标配置为占位）",
             bg=PANEL_BG,
             fg=MICRO,
