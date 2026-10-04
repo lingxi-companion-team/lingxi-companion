@@ -31,8 +31,14 @@ jobs:
           # `-c core.quotePath=false` 是必须的：git 默认会把含中文的路径
           # 转义成 \344\270\215… 形式，那样下面的 grep 永远匹配不到，
           # 这道门禁会静默失效。已实测验证。
+          #
+          # ⚠️ 2026-10-04 补 `\.workbuddy-ai`：`.gitignore` 里 `.workbuddy/`
+          #    （第 51 行）与 `.workbuddy-ai/`（第 53 行）是两条独立规则，
+          #    而原来的 `^\.workbuddy/` 结尾带 `/`、匹配不到 `.workbuddy-ai/`
+          #    —— 即 `.workbuddy-ai/` 只被 .gitignore 保护，**没有被这道门禁
+          #    保护**。工作记忆与会话数据正落在这个目录，必须一起堵上。
           leaked="$(git -c core.quotePath=false ls-files \
-            | grep -E '^(不推送|文档|\.workbuddy)/' || true)"
+            | grep -E '^(不推送|文档|\.workbuddy|\.workbuddy-ai)/' || true)"
           if [ -n "$leaked" ]; then
             printf '被跟踪的私有文件：\n%s\n' "$leaked"
             echo "::error::私有资料目录中出现被 git 跟踪的文件，必须从仓库移出"

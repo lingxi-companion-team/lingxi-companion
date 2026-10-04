@@ -80,7 +80,7 @@
 | `fusion/` | ✅ 已实现 | 动态加权、协商分级、时序平滑 |
 | `app/` | ✅ 已实现 | 参与者信封 + 展示逻辑层（纯函数）+ 分发中枢（含按观看者裁剪与 `POST /hidden` 写通道） |
 | `app/integration/` | ✅ 已实现 | **串行**集成主流程（帧源 → 三路 → 融合 → 平滑 → 信封）+ 逐路降级；**只做装配，不含任何判定公式** |
-| `app/web/` | ✅ 已实现 | **唯一产品前端**（Flet 统一单页）：所有观看者同一套页面，差别只在「管理台可不可见」。依赖 `requirements-web.txt`（**不进 CI**），因此整体 `omit` 于覆盖率；展示规则仍在 `app.present` |
+| `app/web/` | ✅ 已实现 | **唯一产品前端**（Flet 统一单页）：所有观看者同一套页面，差别只在「管理台可不可见」。`flet[web]` 是 `requirements.txt` 里的正式依赖，但 CI 只装 `requirements-dev.txt`，故该层整体 `omit` 于覆盖率；展示规则仍在 `app.present` |
 | `agents/env/` | ✅ 已实现 | **规则版** $E$ 评估（亮度因子 × 清晰度因子，遮挡只上报），见 §2.3 |
 | `agents/expression/`、`agents/behavior/` | ⬜ 空壳 | 两路的 `infer()` 尚未实现，当前由 mock 数据驱动 |
 | `pipeline/` | ⬜ 空壳 | 采集与调度**尚未实现**（含帧队列、丢帧判据）；并发化后 `app/integration/` 退为兜底基线 |

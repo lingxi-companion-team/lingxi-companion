@@ -18,7 +18,7 @@
 
 ## 当前状态
 
-**接口契约、融合层、多端展示（含桌面客户端）、环境智能体（规则版）与串行集成入口已落地；表情、行为两路与流水线仍在开发中**：
+**接口契约、融合层、多端展示（统一单页前端）、环境智能体（规则版）与串行集成入口已落地；表情、行为两路与流水线仍在开发中**：
 
 - 已建立 `main`、`develop` 两条常驻分支，并配置 ruleset 分支保护与 5 项 CI 检查；
 - 已冻结统一感知数据结构（`common/perception_types.py`）与 mock 数据目录；
@@ -27,7 +27,7 @@
   与 `POST /hidden` 写通道（“不向房间公开”开关的上报口）；
 - 已实现**产品前端** `app/web/`（Flet 统一单页）：**所有观看者同一套页面**，
   差别只在“管理台可不可见”（由快照里的 `initiator` 决定），符合需求文档
-  §二.1「无教师/学生端的产品差异」；入口 `python -m app.web`（需 `requirements-web.txt`）；
+  §二.1「无教师/学生端的产品差异」；入口 `python -m app.web`；
 - 已实现环境智能体 `agents/env/`：以亮度因子 × 清晰度因子合成环境可信度 $E$，
   遮挡只上报不参与合成（规则版，模型版待替换）；
 - 已实现**串行集成主流程** `app/integration/`：帧源（合成帧 / mock 流）→ 三路智能体 → 融合
@@ -107,15 +107,18 @@ pytest -q
 
 | 文件 | 内容 | 谁需要装 |
 |:--|:--|:--|
-| `requirements.txt` | 运行时库：`numpy`、`torch`、`onnxruntime`、`opencv-python` | 本地开发 / 部署 |
+| `requirements.txt` | 运行时库：`numpy`、`torch`、`onnxruntime`、`opencv-python`、`flet[web]` | 本地开发 / 部署 |
 | `requirements-dev.txt` | 工具链：`ruff`、`mypy`、`pytest`、`pytest-cov` | 本地开发 / **CI** |
-| `requirements-web.txt` | **可选**：`flet[web]`（产品前端 `app/web` 专用） | 只跑 Web 前端时 |
 
 CI 只安装 `requirements-dev.txt`，因此运行时库的体积不会拖慢门禁检查。
 `requirements.txt` 默认挂官方 CPU-only 源安装 `torch` —— 本项目在普通 CPU 上
 以端侧纯视觉方式运行，不需要 GPU，这样可以避开数 GB 的 CUDA 组件。
-`requirements-web.txt` 同样**不进 CI**（`flet[web]` 会连带拉进整套 web 栈，
-而 CI 根本不会 import 它 —— 见该文件顶部说明）。
+
+> 2026-10-04：产品前端的 `flet[web]` 由「可选依赖」升为**正式依赖**，
+> 原独立的 `requirements-web.txt` 已并入 `requirements.txt`（该文件退役）。
+> 原因是 v8 起 `app/web/` 是**唯一**产品界面，前端成了照文档走一遍的必经一步，
+> 不该再藏在可选清单里。**这不改变 CI 行为** —— CI 依旧只装
+> `requirements-dev.txt`，所以 `app/web/` 仍整体排除在覆盖率之外。
 
 > `requirements.txt` 里的运行时依赖与 `pyproject.toml` 的 `[project] dependencies`
 > 保持一致，两者改动要同步。若改用可编辑安装，请手动带上同一个 CPU 源 ——
@@ -144,7 +147,7 @@ python -m app.integration --source synthetic --frames 30  # 合成帧跑全链�
 ### 打开产品前端（Flet 统一单页）
 
 ```powershell
-pip install -r requirements-web.txt                 # 只有这一条路径需要它
+pip install -r requirements.txt                     # flet[web] 已并入运行时依赖
 python -m app.web                                   # 起 hub + 页面 → http://127.0.0.1:8600/
 python -m app.web --viewer s01 --students 28        # 换观看者 / 改人数
 ```
@@ -154,7 +157,7 @@ python -m app.web --viewer s01 --students 28        # 换观看者 / 改人数
 管理台里的每一项都标了状态：**已接通 / 只读 / 已生效 / 未接入**（未接入的会注明
 需求文档章节号），所以「哪些是真做了」在界面上就能看出来，不靠文档承诺。
 
-> `flet` 刻意**不进 CI**（`requirements-web.txt` 顶部说明了理由），
+> `flet` 虽是正式依赖，但 CI 只装 `requirements-dev.txt`（不含 `flet`），
 > 因此 `app/web/` 整体排除在覆盖率之外；展示规则同样全在 `app/present/`。
 > 中文字体随仓库分发（`assets/fonts/`），否则 Flutter web 会在运行时去 Google 取字体 ——
 > 对一个主张「数据不出设备」的产品，那既不稳定也说不过去。
@@ -162,7 +165,7 @@ python -m app.web --viewer s01 --students 28        # 换观看者 / 改人数
 `--demo` 会起一个**真实的本地 HTTP 服务**并用 `app.integration` 持续喂入 mock 数据：
 页面上的颜色与「维持中」角标都真的过了一遍融合与平滑，而不是随机涂色。
 
-> 两个前端的代码都整体排除在覆盖率之外（一个需要桌面环境、一个需要 `flet`），
+> `app/web/` 的代码整体排除在覆盖率之外（CI 里装不了 `flet`，跑不到），
 > 所以**展示规则一律放在 `app/present/`**（纯函数、100% 覆盖），前端只负责画。
 
 ## 文档入口

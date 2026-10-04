@@ -23,9 +23,16 @@ dependencies = [
     "torch>=2.2",
     "onnxruntime>=1.17",
     "opencv-python>=4.9",
+    # 产品前端（`python -m app.web`）。2026-10-04 从「可选依赖」升为**正式依赖** ——
+    # 理由见 `requirements.txt` 的「演示前端」段，那一段与本行必须同步。
+    #
+    # ⚠️ 升为正式依赖**不等于** CI 会安装它：CI 的 4 个 job 只装
+    #    `requirements-dev.txt`，从不装本清单（torch 同理）。所以
+    #    `app/web/*` 的覆盖率 `omit` 依然必要（见文件末尾）。
+    "flet[web]>=0.28.3",
 ]
 # ⚠️ 2026-09-24：此处原有 `streamlit>=1.31`，与 `requirements.txt` 成对移除 ——
-#    多端展示已改为 Tkinter（标准库），代码中一处都没有 import streamlit。
+#    多端展示已改为自研前端，代码中一处都没有 import streamlit。
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -92,19 +99,22 @@ exclude_lines = [
     "if TYPE_CHECKING:",
     "raise NotImplementedError",
 ]
-# 纯 GUI 外壳：CI 跑在**无显示环境**，这部分代码根本执行不到，
-# 留着只会把覆盖率拖破 80% 门槛。可测规则已全部下沉到 `app/present/`（纯函数）。
+# 唯一一条：产品前端 `app/web/*`（v8 Flet 统一单页）。
 #
-# ⚠️ 必须先于 `app/client/` 的第一行代码存在 —— 否则那个 PR 会一提交就红。
+# 为什么必须 omit：CI 的 4 个 job 只安装 `requirements-dev.txt`
+# （见 `.github/workflows/tests.yml`），**里面没有 flet** —— CI 里连
+# `import app.web` 都做不到，留着只会把覆盖率拖破 80% 门槛。
 #
-# `app/web/*`（v8 Flet 统一单页）同理，且理由更硬：`flet` 刻意**不进 CI**
-# （见 `requirements-web.txt` 顶部），CI 连 import 都做不到。
-# 它的「读 payload → 调 present 层 → 画」三件事里，判定规则全部在 `app/present/`，
-# 所以 omit 不会让任何规则失去护栏。
+# 注意这与「flet 是不是正式依赖」是两件事：它自 2026-10-04 起已是
+# `[project] dependencies` 的一员，但 CI 从不为**任何**运行时依赖付出安装成本
+# （torch / onnxruntime / opencv-python 同理），本清单整体不进 CI。
 #
-# 2026-10-02 补：`app/client/*` 是**调试外壳**（不是产品前端），`app/web/*` 才是
-# 产品前端 —— 定位见 `app/client/window.py` 与 `app/client/__main__.py` 的模块 docstring。
+# 为什么不损失护栏：`app/web/*` 只做「读 payload → 调 present 层 → 画」，
+# 所有判定规则都下沉在 `app/present/`（纯函数、CI 全跑），omit 不摘掉任何规则。
+#
+# 历史：2026-10-02 → 2026-10-04 这里是 **2 条**，另一条 `app/client/*`（Tkinter
+# 调试外壳）已随该前端整体退役（2026-10-04，PR #15 删 `app/client/` 13 文件），
+# 故本清单缩为 1 条 —— 这是删路径、不是放宽判定。
 omit = [
-    "app/client/*",
     "app/web/*",
 ]
