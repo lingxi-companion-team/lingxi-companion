@@ -7,7 +7,7 @@
 后者每帧都在动。混在一起会让 hub 从「装配」滑向「什么都管」。
 
 更重要的是：**公开规则是一条可测的判定规则**，而 ``app.hub`` 里没有复杂逻辑的容身之处
-（``app/client/`` 与 hub 的装配路径都刻意做薄）。规则放这里，配一套独立单测。
+（GUI 层与 hub 的装配路径都刻意做薄）。规则放这里，配一套独立单测。
 
 为什么用「公开规则」而不是「给发起人开一个看得见全部的后门」
 ------------------------------------------------------------
@@ -45,7 +45,7 @@ POLICY_MANDATORY = "mandatory"
 POLICIES: tuple[str, ...] = (POLICY_OPTIONAL, POLICY_MANDATORY)
 
 #: 规则的中文展示名。放在这里而不是 UI 层：它是**展示规则**，
-#: 而 UI 外壳（``app/client/`` / 新的 Flet 层）整体 omit 于覆盖率 —— 写在那儿没有护栏。
+#: 而 UI 层（``app/web/``）整体 omit 于覆盖率 —— 写在那儿没有护栏。
 POLICY_TEXT: dict[str, str] = {
     POLICY_OPTIONAL: "个人自主选择",
     POLICY_MANDATORY: "全员强制公开",

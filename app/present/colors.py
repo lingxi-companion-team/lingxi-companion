@@ -1,7 +1,7 @@
 """状态 → 颜色 映射（纯逻辑，无 GUI 依赖）。
 
 这里只产出**色值字符串**，不碰任何绘图库，因此可以在 headless CI 里满跑
-（GUI 外壳在 ``app/client/``，整体 omit）。
+（GUI 层 ``app/web/`` 整体 omit）。
 
 v8 统一页配色（2026-10-01）
 ---------------------------
@@ -118,7 +118,7 @@ STATE_FILLS: dict[EmotionLabel, str] = {
 
 #: ``on_fill`` 的白色候选。
 ON_LIGHT_TEXT = "#ffffff"
-#: ``on_fill`` 的深色候选（与 :data:`app.client.theme.INK` 同一族，比纯黑柔和）。
+#: ``on_fill`` 的深色候选（比纯黑柔和）。
 ON_DARK_TEXT = "#16233a"
 
 #: 「已关闭感知」的展示色（v7 第 5 态，设计稿第 5 张 KPI 卡）。
@@ -179,7 +179,7 @@ def color_for_key(label: str) -> str:
     客户端从 payload 里拿到的是 ``"focused"`` 这样的字符串而不是枚举，所以需要一个
     str 入口。未登记的键退回置灰色而不是抛错 —— 与 :func:`color_for` 同一取舍：
     展示层不为一条异常数据整个崩掉。这个兜底刻意留在**本模块**（有测试），
-    而不是写在 GUI 里 —— ``app/client/`` 整体 omit 于覆盖率，规则写在那儿等于没有护栏。
+    而不是写在 GUI 里 —— GUI 层（``app/web/``）整体 omit 于覆盖率，规则写在那儿等于没有护栏。
     """
     try:
         return color_for(EmotionLabel(label))
@@ -192,7 +192,7 @@ def color_for_key_count(label: str, count: int) -> str:
 
     存在的理由是**别让 GUI 去拼规则**：汇总面板拿到的是 ``LABEL_ORDER`` 里的字符串
     键与一个整数，如果让它自己写 ``color_for_key(k) if count else DIM_COLOR``，
-    那条「0 人置灰」的规则就跑到没有覆盖率的 ``app/client/`` 里去了。这里把它
+    那条「0 人置灰」的规则就跑到没有覆盖率的 GUI 层里去了。这里把它
     收回有测试的层，GUI 只调一个函数。
 
     ``color_for_count`` 是同一个规则的枚举入口（服务端/内部调用用），两者口径一致，
@@ -214,7 +214,7 @@ def fill_for_key(label: str) -> str:
     """按**线路格式的字符串键**取色标签填充色（与 :func:`color_for_key` 对称）。
 
     未登记的键退回置灰色而不是抛错，理由同 :func:`color_for_key`：这个兜底必须
-    留在**有测试的层**，写在 ``app/client/`` 里等于没有护栏。
+    留在**有测试的层**，写在 GUI 层里等于没有护栏。
     """
     try:
         return fill_for(EmotionLabel(label))
@@ -225,7 +225,7 @@ def fill_for_key(label: str) -> str:
 def _luminance(color: str) -> float:
     """WCAG 2.1 相对亮度（输入 ``#rrggbb``）。
 
-    与 ``tests/app/client/test_contrast.py`` 用的是同一个公式 —— 那边是**断言**、
+    与 ``app/present/skin.py`` 的门槛用的是同一个公式 —— 那边是**断言**、
     这里是**运行时决策**，两处必须同源，否则「测试说达标、运行时却选了另一色」。
     """
     raw = color.lstrip("#")

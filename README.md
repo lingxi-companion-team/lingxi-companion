@@ -28,10 +28,6 @@
 - 已实现**产品前端** `app/web/`（Flet 统一单页）：**所有观看者同一套页面**，
   差别只在“管理台可不可见”（由快照里的 `initiator` 决定），符合需求文档
   §二.1「无教师/学生端的产品差异」；入口 `python -m app.web`（需 `requirements-web.txt`）；
-- 已实现**调试外壳** `app/client/`（Tkinter，标准库零依赖）：一个窗口在展开态与最小化态
-  之间切换（最小化后是可拖动的圆形图标 + 状态分量气泡，右键菜单与 `Ctrl+Alt+Q` 均可退出）；
-  入口 `python -m app.client`。**它不是产品界面** —— 保留只为在装不上 `flet` 的环境里
-  能肉眼看一眼链路是否活着（交付记录见 `docs/reports/client-2026-09-24.md`）；
 - 已实现环境智能体 `agents/env/`：以亮度因子 × 清晰度因子合成环境可信度 $E$，
   遮挡只上报不参与合成（规则版，模型版待替换）；
 - 已实现**串行集成主流程** `app/integration/`：帧源（合成帧 / mock 流）→ 三路智能体 → 融合
@@ -70,14 +66,13 @@ lingxi-companion/
 │   └── env/            # 环境智能体（规则版已实现）
 │       └── agent.py     #   E 值评估：采样 / 度量 / 合成 / 协议适配
 ├── app/                 # 应用层：前端 + 多端展示 + 串行集成
-│   ├── client/          #   调试外壳（Tkinter，非产品界面；规则全在 present/，本层只画）
-│   ├── demo.py          #   演示环境（hub + 假数据驱动 + HTTP 客户端），两个前端共用
+│   ├── demo.py          #   演示环境（hub + 假数据驱动 + HTTP 客户端），与界面框架无关
 │   ├── envelope.py      #   参与者信封：会话层身份与可见性
 │   ├── hub.py           #   在线表 + 按观看者裁剪 + HTTP 端点（读快照 / 写隐藏开关）
 │   ├── integration/     #   串行集成主流程（帧源 → 三路 → 融合 → 平滑 → 信封）
 │   ├── present/         #   展示纯函数：宫格 / 汇总 / 气泡 / 配色 / 可见性 / 筛选 / 皮肤
 │   ├── room.py          #   房间元数据：名称 / 主题 / 邀请码 / 状态公开规则
-│   └── web/             #   **产品前端**（Flet 统一单页，不分端）
+│   └── web/             #   **唯一产品前端**（Flet 统一单页，不分端）
 ├── assets/fonts/        # 前端中文字体（Noto Sans SC，OFL 授权，随仓库分发）
 ├── common/              # 共享冻结层（接口契约所在，变更须三方评审）
 │   ├── agent_base.py    #   智能体抽象基类
@@ -146,7 +141,7 @@ python -m app.integration --source synthetic --frames 30  # 合成帧跑全链�
 环境路是真实实现。因此它的输出用于验证「链路装配与降级行为」，
 **不代表**融合精度或端到端性能。
 
-### 打开产品前端（Flet 统一单页，需要额外依赖）
+### 打开产品前端（Flet 统一单页）
 
 ```powershell
 pip install -r requirements-web.txt                 # 只有这一条路径需要它
@@ -164,22 +159,8 @@ python -m app.web --viewer s01 --students 28        # 换观看者 / 改人数
 > 中文字体随仓库分发（`assets/fonts/`），否则 Flutter web 会在运行时去 Google 取字体 ——
 > 对一个主张「数据不出设备」的产品，那既不稳定也说不过去。
 
-### 打开调试外壳（Tkinter，零第三方依赖）
-
-```powershell
-python -m app.client --demo --view dashboard        # 三栏监管视图（调试用）
-python -m app.client --demo --view grid             # 共享宫格视图（调试用）
-python -m app.client --url http://127.0.0.1:8765    # 连一个已在跑的 hub
-python -m app.client --demo --selftest --json --port 0   # 冒烟自检：构建→绘制→切态→退出
-```
-
-⚠️ **这不是产品界面**，只是**调试外壳**：它按 `--view` 建两套不同布局，那是
-产品化之前的形态。保留它只有一个理由 —— **纯标准库**，在装不上 `flet` 的环境
-（离线机器、无显示环境）里仍能肉眼看一眼链路是不是活的。新增功能一律加在 `app/web/`。
-
 `--demo` 会起一个**真实的本地 HTTP 服务**并用 `app.integration` 持续喂入 mock 数据：
-宫格上的颜色与「维持中」角标都真的过了一遍融合与平滑，而不是随机涂色。
-最小化后窗口变成一个可拖动的圆形图标，右键菜单与 `Ctrl+Alt+Q` 均可退出。
+页面上的颜色与「维持中」角标都真的过了一遍融合与平滑，而不是随机涂色。
 
 > 两个前端的代码都整体排除在覆盖率之外（一个需要桌面环境、一个需要 `flet`），
 > 所以**展示规则一律放在 `app/present/`**（纯函数、100% 覆盖），前端只负责画。
