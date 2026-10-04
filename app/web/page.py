@@ -74,7 +74,7 @@ from app.room import POLICY_MANDATORY, POLICY_OPTIONAL, POLICY_TEXT
 
 __all__ = ["POLL_SECONDS", "TREND_WINDOW", "VIEWER_LIMIT", "UnifiedPage"]
 
-#: 轮询周期（秒）。与 ``app.client`` 的节奏一致：更快只会让画面抖，
+#: 轮询周期（秒）。更快只会让画面抖，
 #: 更慢则「实时统计」这句话就不成立了。
 POLL_SECONDS = 1.2
 
@@ -82,7 +82,7 @@ POLL_SECONDS = 1.2
 TREND_WINDOW = 60
 
 #: 形状名 → 可绘制字符。形状名本身是 present 层的业务概念（有测试），
-#: 用哪个字符画是画法选择，所以映射留在这里（与 ``app.client.theme`` 同款）。
+#: 用哪个字符画是画法选择，所以映射留在这里。
 SHAPE_GLYPHS: dict[str, str] = {
     "round": "●",
     "triangle": "▲",

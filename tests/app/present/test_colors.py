@@ -139,7 +139,7 @@ def test_ink_and_fill_are_different_values_per_state() -> None:
 def _contrast(foreground: str, background: str) -> float:
     """本模块自带的对比度实现 —— **刻意不 import 测试工具**。
 
-    ``tests/app/client/test_contrast.py`` 里那份属于 client 侧，present 层的测试
+    ``tests/app/present/test_skin.py`` 覆盖的是 v8 皮肤，present 层的测试
     不该反向依赖它（层级会乱）。公式只有六行，各写一份比跨层 import 更省事，
     且这里要断的是「同一个结果」，两处独立实现反而能互相印证。
     """

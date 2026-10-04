@@ -50,7 +50,7 @@ def columns_for(count: int, *, max_columns: int = MAX_GRID_COLUMNS) -> int:
     也最容易一眼扫完。人数很多时再夹到 :data:`MAX_GRID_COLUMNS`，避免横幅式一路排开。
 
     这是**纯几何布局**，没有业务语义 —— 放在这里只是因为它是可被 CI 完整测试的纯函数，
-    而 ``app/client/`` 整体被覆盖率 ``omit``，规则不得下沉到那边（设计稿 §06.4）。
+    而 GUI 层整体被覆盖率 ``omit``，规则不得下沉到那边（设计稿 §06.4）。
     """
     if count <= 0:
         return 1

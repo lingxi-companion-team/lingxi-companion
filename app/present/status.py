@@ -1,6 +1,6 @@
 """连接状态与数据新鲜度判定（纯逻辑；供 client 离线降级与 stale 视觉分层）。
 
-这一层被 CI 逼出来：`app/client/` 整体 omit，任何判定写进 GUI 就永远测不到。
+这一层被 CI 逼出来：GUI 层整体 omit，任何判定写进 GUI 就永远测不到。
 所以「断网时状态栏怎么写」「数据算不算旧」这两条规则落在这里，client 只负责
 调用返回值去改样式。
 
@@ -51,7 +51,7 @@ def freshness_key(now_ts: float, state: Mapping[str, Any] | None) -> str:
 
     client 拿到的是 :func:`app.envelope.ParticipantState.to_dict` 序列化后的
     ``state`` 字段；**从 dict 取值再判定**这一步也是规则，不该写进 client
-    （``app/client/`` 被覆盖率 omit）。缺字段 / 非 Mapping 一律按 ``"stale"``
+    （GUI 层被覆盖率 omit）。缺字段 / 非 Mapping 一律按 ``"stale"``
     处理 —— 没有可证明新鲜的数据，视觉上按最弱处理，不抛错（同 ``color_for_key``
     的兜底约定）。
     """

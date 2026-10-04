@@ -48,7 +48,7 @@ LABEL_ORDER: tuple[str, ...] = tuple(label.value for label in DISPLAY_LABELS)
 #: 状态的**中文展示名**（键 = 线路格式的 ``label``）。
 #:
 #: 文案取自设计稿 §04.1 的四色图例。之所以放在这里而不是客户端里：它是**展示规则**
-#: （与配色同级），而 ``app/client/`` 整体 omit 于覆盖率 —— 规则写在那里就等于没有护栏。
+#: （与配色同级），而 GUI 层整体 omit 于覆盖率 —— 规则写在那里就等于没有护栏。
 #: 放这儿还能顺带保证「后端颜色 / 文案」与「前端渲染」用的是同一套键。
 LABEL_TEXT: dict[str, str] = {
     EmotionLabel.FOCUSED.value: "专注",

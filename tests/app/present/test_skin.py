@@ -1,6 +1,6 @@
 """``app.present.skin`` 的可达性守卫。
 
-与 ``tests/app/client/test_contrast.py`` 同源、同一套门槛、同一套公式 ——
+与 ``app/present/colors.py`` 的状态色同源、同一套门槛、同一套公式 ——
 刻意**不 import** 那边的实现：两套皮肤是两套设计，各自的守卫也该各自独立，
 共用一份 helper 只会让「改了这边、那边悄悄跟着变」变得可能。
 
