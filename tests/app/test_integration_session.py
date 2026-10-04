@@ -373,7 +373,9 @@ def test_publish_registers_student_into_hub():
     assert payload["viewer"] == "s07"
     assert payload["role"] == ROLE_STUDENT
     assert [cell["participant_id"] for cell in payload["grid"]] == ["s07"]
-    assert "summary" not in payload  # A2：学生端压根不下发汇总
+    # v8 去分端：聚合对所有人下发（旧实现里学生端没有 summary 键）。
+    assert payload["summary"]["online_count"] == 1
+    assert payload["room"]["total_count"] == 1
 
 
 def test_teacher_publishes_no_state_and_occupies_no_cell():

@@ -26,7 +26,9 @@ __all__ = [
     "DISPLAY_LABELS",
     "LABEL_ORDER",
     "LABEL_TEXT",
+    "RoomStats",
     "Summary",
+    "room_stats",
     "summarize",
 ]
 
@@ -110,6 +112,52 @@ class Summary:
             "closed_ratio": self.closed_ratio,
         }
 
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> Summary:
+        """从线路格式还原（:meth:`to_dict` 的逆）。
+
+        为什么需要它：统一页要把每一帧的 ``summary`` 喂进
+        :class:`app.present.trend.TrendBuffer` 才能画出房间趋势。趋势缓冲要的是
+        ``Summary`` 而不是 dict —— 若让界面自己从 dict 里抠字段拼一个 ``Summary``，
+        「缺字段怎么办」「ratio 要不要重算」这些判定就跑到没有覆盖率的
+        ``app/web/`` 里去了。
+
+        **容错口径**（与展示层其它兜底一致：不为一条脏数据整体崩掉）：
+        - 非 Mapping / 缺 ``by_label``：当作空汇总（全 0），不抛错；
+        - 缺的标签键补 0、多出来的键丢弃 —— 只认 :data:`LABEL_ORDER` 里的四个键；
+        - ``ratio`` **不采信线路上的值，一律按 ``by_label`` 与 ``online_count`` 重算**：
+          否则一个自相矛盾的 payload 会让趋势图上的比例与人数对不上，而那种错
+          看起来只是「图有点怪」，极难被发现。重算还能顺带修掉「比之和不等于 1」。
+        """
+        if not isinstance(payload, Mapping):
+            return summarize([])
+        raw_counts = payload.get("by_label")
+        counts: dict[str, int] = {}
+        if isinstance(raw_counts, Mapping):
+            for key in LABEL_ORDER:
+                try:
+                    counts[key] = int(raw_counts.get(key, 0))
+                except (TypeError, ValueError):
+                    counts[key] = 0
+        else:
+            counts = dict.fromkeys(LABEL_ORDER, 0)
+        try:
+            online = int(payload.get("online_count", 0))
+        except (TypeError, ValueError):
+            online = 0
+        try:
+            closed = int(payload.get("closed_count", 0))
+        except (TypeError, ValueError):
+            closed = 0
+        ratio = {key: (count / online if online else 0.0) for key, count in counts.items()}
+        return cls(
+            by_label=counts,
+            ratio=ratio,
+            online_count=max(0, online),
+            members_by_label={key: [] for key in LABEL_ORDER},
+            closed_count=max(0, closed),
+        )
+
 
 def summarize(participants: Iterable[ParticipantState]) -> Summary:
     """统计汇总。
@@ -156,4 +204,89 @@ def summarize(participants: Iterable[ParticipantState]) -> Summary:
         online_count=online_count,
         members_by_label=members,
         closed_count=closed_count,
+    )
+
+
+#: 房间统计里的四个互斥档位（顺序固定，供 UI 按序渲染）。
+ROOM_STAT_KEYS: tuple[str, ...] = ("published", "hidden", "pending", "closed")
+
+
+@dataclass(frozen=True)
+class RoomStats:
+    """房间级计数（需求文档 §模块二.3「实时统计房间整体数据」）。
+
+    Attributes:
+        total_count: 房间里的人**总数**（含发起人、含未开启感知者、含还没出结果者）。
+        published_count: **已公开状态**的人数 —— 也就是聚合面板的分母。
+        hidden_count: 开启了感知但**选择不公开**的人数。
+        pending_count: 还没出结果的人数（刚进房间、或本帧尚未形成判定）。
+        closed_count: **未开启感知**的人数。
+
+    不变式（``test_summary.py`` 钉住）::
+
+        published + hidden + pending + closed == total
+
+    四档**互斥且穷尽**：每个人先按「是否关闭感知」二分，未关闭者再按
+    「是否有状态」二分，有状态者再按「是否公开」二分。这样 UI 上「总数 30、
+    公开 24」旁边那 6 个人去哪了，永远有答案，不会出现「对不上」的尴尬。
+    """
+
+    total_count: int
+    published_count: int
+    hidden_count: int
+    pending_count: int
+    closed_count: int
+
+    def to_dict(self) -> dict[str, int]:
+        return {
+            "total_count": self.total_count,
+            "published_count": self.published_count,
+            "hidden_count": self.hidden_count,
+            "pending_count": self.pending_count,
+            "closed_count": self.closed_count,
+        }
+
+    @property
+    def publish_ratio(self) -> float:
+        """公开率（0~1）；房间为空时 ``0.0``。"""
+        return self.published_count / self.total_count if self.total_count else 0.0
+
+
+def room_stats(
+    participants: Iterable[ParticipantState],
+    *,
+    forces_publish: bool = False,
+) -> RoomStats:
+    """按 :class:`RoomStats` 的四档统计。
+
+    注意它统计的是**传入的全部参与者**（原始数据，未按观看者掩去）——
+    因为「总人数」与「公开人数」是房间级事实，不随观看者变化。若拿掩去后的
+    列表来算，观看者自己那份「未公开但自己看得见」的状态会被算成已公开，
+    人数就虚高了。
+
+    Args:
+        forces_publish: 房间规则是否**强制公开**（``RoomInfo.forces_publish``）。
+            为真时个人的「未公开」标志被忽略，这些人计入
+            :attr:`RoomStats.published_count` 而不是 ``hidden_count`` ——
+            否则界面会出现「规则写着全员公开，可公开人数却少了几个」的自相矛盾。
+    """
+    total = published = hidden = pending = closed = 0
+    for participant in participants:
+        total += 1
+        if participant.closed:
+            closed += 1
+            continue
+        if not participant.has_state:
+            pending += 1
+            continue
+        if participant.hidden and not forces_publish:
+            hidden += 1
+        else:
+            published += 1
+    return RoomStats(
+        total_count=total,
+        published_count=published,
+        hidden_count=hidden,
+        pending_count=pending,
+        closed_count=closed,
     )

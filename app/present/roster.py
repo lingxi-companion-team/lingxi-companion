@@ -29,7 +29,13 @@ from app.present.grid import grid_cells
 from app.present.status import freshness
 from app.present.summary import CLOSED_KEY, CLOSED_TEXT, LABEL_ORDER, LABEL_TEXT
 
-__all__ = ["RosterRow", "roster_rows"]
+__all__ = ["MASKED_TEXT", "RosterRow", "roster_rows"]
+
+#: 状态被掩去时宫格里的显示文案（需求文档 §模块二.2 的「仍占格」状态）。
+#:
+#: 刻意不用警示色也不用「已屏蔽」这类带惩罚意味的词：公开开关是**权利**，
+#: 不是过失。文案与样式都要让「选择不公开」看起来是一个正常选项。
+MASKED_TEXT = "已隐藏"
 
 #: 名单里的状态档位顺序（供 ``group_by_label`` 排序用）：四个情感档在前，已关闭在最后。
 _GROUP_ORDER: dict[str, int] = {key: index for index, key in enumerate(LABEL_ORDER)}
@@ -51,6 +57,10 @@ class RosterRow:
         closed: 是否已关闭感知。
         hidden: 是否对同学隐藏（教师端仍看得到状态，此标志只影响标签旁的小注）。
         ts: 该行状态的时间戳（已关闭者为参与者自身 ``ts``）。
+        masked: 该行的状态**被按观看者掩去了**（本人选择不公开，且观看者不是本人）。
+            与 ``hidden`` 的区别：``hidden`` 是「这个人开着未公开开关」，
+            ``masked`` 是「**在你眼里**他的状态是空白的」—— 本人看自己时
+            ``hidden`` 为真而 ``masked`` 为假。宫格要的是后者（见 :attr:`cell_text`）。
     """
 
     participant_id: str
@@ -63,6 +73,28 @@ class RosterRow:
     closed: bool
     hidden: bool
     ts: float
+    masked: bool = False
+
+    @property
+    def cell_text(self) -> str:
+        """宫格格子里显示的那两个字。
+
+        与 :attr:`label_text` 的差别只在「被掩去」这一种情形：
+
+        - **名单**里显示「未知」—— 那张表是按状态分档的，掩去者确实没有可读的判定，
+          归到灰色档（``unknown``）才与筛选、计数自洽；
+        - **宫格**里显示「已隐藏」—— 宫格是给人扫视的，「这个人选择不公开」
+          比「系统没测出来」是更有用的信息，而且这正是需求文档 §模块二.2
+          要求「仍占格」的那个状态。
+
+        本人看自己时 ``masked`` 为假，所以这里显示的是真实状态名 ——
+        这正是 §模块二.2「默认仅本人可见」的字面意思。
+        """
+        if self.closed:
+            return CLOSED_TEXT
+        if self.masked:
+            return MASKED_TEXT
+        return self.label_text
 
 
 def _to_row(participant: ParticipantState, now_ts: float) -> RosterRow:
@@ -85,6 +117,7 @@ def _to_row(participant: ParticipantState, now_ts: float) -> RosterRow:
     if state is None:
         # 走到这里只可能是「被隐藏且本帧无状态」—— 占格但没有任何可展示读数。
         # 归到 UNKNOWN 档：与「本帧未形成判定」同一视觉处理，不给它单开一档。
+        # （宫格上两者会分开显示 —— 见 ``RosterRow.cell_text``。）
         unknown_key = LABEL_ORDER[-1]
         return RosterRow(
             participant_id=participant.participant_id,
@@ -97,6 +130,7 @@ def _to_row(participant: ParticipantState, now_ts: float) -> RosterRow:
             closed=False,
             hidden=participant.hidden,
             ts=participant.ts,
+            masked=participant.hidden,
         )
     return RosterRow(
         participant_id=participant.participant_id,
