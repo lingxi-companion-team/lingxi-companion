@@ -39,8 +39,6 @@ from app.present.console import (
     unwired_items,
     visible_sections,
 )
-from app.present.diag import diag_lines
-from app.present.diff import changed_participants
 from app.present.filters import (
     ATTENTION_ORDER,
     BUCKET_ALL,
@@ -61,16 +59,6 @@ from app.present.filters import (
 )
 from app.present.grid import MAX_GRID_COLUMNS, columns_for, grid_cells, sort_key
 from app.present.kpi import KpiCard, kpi_cards
-from app.present.layout import (
-    INSPECTOR_FULL,
-    INSPECTOR_HIDDEN,
-    INSPECTOR_NARROW,
-    NAV_FULL,
-    NAV_HIDDEN,
-    NAV_ICONS,
-    Layout,
-    layout_for_width,
-)
 from app.present.roster import MASKED_TEXT, RosterRow, roster_rows
 from app.present.scale import (
     SCALE_COMPACT,
@@ -171,9 +159,6 @@ __all__ = [
     "INK_2",
     "INK_3",
     "INK_HI",
-    "INSPECTOR_FULL",
-    "INSPECTOR_HIDDEN",
-    "INSPECTOR_NARROW",
     "KINDS",
     "KIND_FACT",
     "KIND_READONLY",
@@ -186,9 +171,6 @@ __all__ = [
     "MASKED_TEXT",
     "MAX_GRID_COLUMNS",
     "MICRO",
-    "NAV_FULL",
-    "NAV_HIDDEN",
-    "NAV_ICONS",
     "OK_TAG_BG",
     "OK_TAG_FG",
     "ON_DARK_TEXT",
@@ -231,7 +213,6 @@ __all__ = [
     "ConsoleSection",
     "FilterOption",
     "KpiCard",
-    "Layout",
     "RoomStats",
     "RosterRow",
     "SortOption",
@@ -241,7 +222,6 @@ __all__ = [
     "aggregate_components",
     "bucket_of",
     "card_geometry",
-    "changed_participants",
     "color_for",
     "color_for_count",
     "color_for_key",
@@ -249,7 +229,6 @@ __all__ = [
     "columns_at",
     "columns_for",
     "console_items",
-    "diag_lines",
     "fill_for",
     "fill_for_key",
     "filter_counts",
@@ -259,7 +238,6 @@ __all__ = [
     "grid_cells",
     "is_dim",
     "kpi_cards",
-    "layout_for_width",
     "normalize_filter",
     "normalize_sort",
     "offline",
