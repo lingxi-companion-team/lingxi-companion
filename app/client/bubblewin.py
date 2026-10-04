@@ -38,10 +38,11 @@ from app.client.theme import (
     TRANSPARENT_KEY,
 )
 from app.present.summary import LABEL_TEXT
+from app.present.visibility import HIDDEN_SCOPE_TEXT
 
 __all__ = ["BubbleWindow", "ExitHotkey", "build_context_menu", "try_enable_transparency"]
 
-#: 「状态 → 该状态的成员名单」。教师气泡的分量点击后展开它。
+#: 「状态 → 该状态的成员名单」。气泡的分量点击后展开它。
 MemberMap = Mapping[str, Sequence[str]]
 
 #: 一个气泡分量（线路格式，来自 ``app.present.bubble``）。
@@ -155,9 +156,10 @@ def build_context_menu(
 ) -> tk.Menu:
     """构造右键上下文菜单（R2 的**必做**退出通道）。
 
-    ``hidden_var`` 为 ``None`` 时不出现隐藏条目 —— 教师端没有这个开关（D5）。
-    文案按 R5 定为「**仅对同学隐藏（教师仍可见）**」：把真实可见范围直接写进菜单，
-    而不是叫「隐藏我的状态」让用户误以为老师也看不到。
+    ``hidden_var`` 为 ``None`` 时不出现隐藏条目 —— 监管视图没有这个开关（D5）。
+    文案取自 :data:`app.present.visibility.HIDDEN_SCOPE_TEXT`（**单一来源**）：
+    它必须与 ``visible_to`` 的真实行为一致，否则就是**误导性的隐私承诺**（R5）。
+    不在这里写死，是因为本模块整体 omit 于覆盖率，写在这里没人测得着。
 
     每次弹出时**重建**菜单，而不是建一次改标签：这样「最小化 / 展开」的文案永远与
     当前状态一致，不会出现两份需要同步的状态。
@@ -169,7 +171,7 @@ def build_context_menu(
     )
     if hidden_var is not None:
         menu.add_checkbutton(
-            label="仅对同学隐藏（教师仍可见）",
+            label=HIDDEN_SCOPE_TEXT,
             variable=hidden_var,
             command=on_toggle_hidden,
         )

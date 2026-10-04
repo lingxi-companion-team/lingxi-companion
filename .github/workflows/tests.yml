@@ -117,6 +117,23 @@ jobs:
           python -m pytest
           --strict-markers
           --strict-config
+          --ignore=tests/stress
           --cov
           --cov-report=term-missing
           --cov-fail-under=80
+
+      # 压测**单独跑，且不带覆盖率插桩**。
+      #
+      # 为什么必须分开（2026-10-02 实测）：`--cov` 的逐行追踪会让纯 Python 执行
+      # 慢约**一个数量级** —— 同一台机器、同一条测试，只改这一个开关：
+      #     不带 --cov：串行链路单帧中位  2.02 ms   （预算 20 ms）
+      #     带   --cov：串行链路单帧中位 22.05 ms   （超预算 10%）
+      # 而 `tests/stress` 里有一条预算**是从产品指标推出来的** ——
+      # 端到端单帧必须快于采集间隔 `1000 / pipeline.target_fps`（默认 66.7 ms）。
+      # 在插桩下量它，等于用一把被拉长的尺子量产品指标：要么随机变红，
+      # 要么为了让它变绿而把产品指标改松。两种结果都不能接受。
+      #
+      # 放在**同一个 job** 里是有意的：这一步失败同样会让 `pytest (3.x)` 这个
+      # required check 变红，压测因此不会被绕过。
+      - name: 运行压测（不插桩）
+        run: python -m pytest tests/stress -q

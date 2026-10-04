@@ -49,6 +49,8 @@ data/processed/
 
 # 本地工具与工作产物（含审计报告、会话记录）
 .workbuddy/
+# 同上：工作记忆/会话数据目录（与 .workbuddy/ 同类，禁止入库）
+.workbuddy-ai/
 
 *.tmp
 *.log

@@ -92,10 +92,19 @@ exclude_lines = [
     "if TYPE_CHECKING:",
     "raise NotImplementedError",
 ]
-# 纯 GUI 外壳（Tkinter 客户端）：CI 跑在**无显示环境**，这部分代码根本执行不到，
+# 纯 GUI 外壳：CI 跑在**无显示环境**，这部分代码根本执行不到，
 # 留着只会把覆盖率拖破 80% 门槛。可测规则已全部下沉到 `app/present/`（纯函数）。
 #
 # ⚠️ 必须先于 `app/client/` 的第一行代码存在 —— 否则那个 PR 会一提交就红。
+#
+# `app/web/*`（v8 Flet 统一单页）同理，且理由更硬：`flet` 刻意**不进 CI**
+# （见 `requirements-web.txt` 顶部），CI 连 import 都做不到。
+# 它的「读 payload → 调 present 层 → 画」三件事里，判定规则全部在 `app/present/`，
+# 所以 omit 不会让任何规则失去护栏。
+#
+# 2026-10-02 补：`app/client/*` 是**调试外壳**（不是产品前端），`app/web/*` 才是
+# 产品前端 —— 定位见 `app/client/window.py` 与 `app/client/__main__.py` 的模块 docstring。
 omit = [
     "app/client/*",
+    "app/web/*",
 ]
